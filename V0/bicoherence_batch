@@ -1,0 +1,261 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import time
+import glob
+import commands
+import subprocess
+import getpass
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+	parser.add_option("-G", "--source",help="Path to source directory.",default='source')
+        parser.add_option("-r", "--fs",help="Expected sampling rate of input time series.",default = 16384)
+        parser.add_option("-T", "--threshMan",help="Manual threshold, on or off.",default = 1)
+        parser.add_option("-c", "--HbicohThresh",help="Manual threshold for function 2.",default = 0.9606)
+        parser.add_option("-H", "--HbicohBspcThresh",help="Manual threshold for function 3.",default = 0.7)
+        parser.add_option("-F", "--fnct",help="Function selection.")
+        parser.add_option("-m", "--mode",help="Mode selection.",default = 0)
+        parser.add_option("-A", "--ChannelA",help="A channel file (string).",default = 'A')
+        parser.add_option("-B", "--ChannelB",help="B channel file (string).",default = 'B')
+        parser.add_option("-x", "--filt",help="Filter, on/off.",default = 1)
+        parser.add_option("-s", "--segslice",help="Slice time series, on/off.",default = 0)
+        parser.add_option("-S", "--segStart",help="Segment slice start time (s).",default = 0.0)
+        parser.add_option("-E", "--segEnd",help="Segment slice end time (s).",default = 1.0)
+        parser.add_option("-N", "--full_SNR",help="Process SNR on full time segment before segment slice, on/off.",default = 1)
+        parser.add_option("-a", "--autom",help="Automatic overlap parameter calculating, on/off .",default = 1)
+        parser.add_option("-t", "--time_window",help="Desired length of time for analysis (s).",default = 4.0)
+        parser.add_option("-o", "--offset_multiplier",help="(See manual.  Normally this should be calculated automatically by setting autom to 1.)",default = 1.0)
+        parser.add_option("-O", "--ol",help="Desired segment overlap (%).",default = 98.0)
+        parser.add_option("-g", "--seg",help="Desired number of experiments.",default = 30)
+        parser.add_option("-l", "--tile",help="Tiled option, on/off.",default = 0)
+        parser.add_option("-C", "--GPS_central",help="Expected GPS central time.",default = 0.0)
+        parser.add_option("-k", "--check",help="Check parameters, on/off.",default = 1)
+        parser.add_option("-D", "--dnsmple",help="Downsample, on/off.",default = 0)
+        parser.add_option("-d", "--decm",help="Decimate, on/off.",default = 1)
+        parser.add_option("-p", "--plot_img",help="Plot, on/off.",default = 0)
+        parser.add_option("-R", "--randomize",help="Use phase randomization, on/off.",default = 1)
+        parser.add_option("-q", "--preSeq",help="Use user-provided random number sequence, on/off.",default = 0)
+        parser.add_option("-w", "--sequenceN",help="User-provided random number list (typically a text file), full path (string).",default = 'text.txt')
+        parser.add_option("-f", "--fsd",help="Target downsampling or decimation sampling rate (Hz).",default = 4096)
+        parser.add_option("-u", "--uSnrV",help="User-input SNR value.",default = 1.0)
+        parser.add_option("-U", "--upr",help="Upper bispectral value for bispectrogram calculation.",default = 1.0)
+        parser.add_option("-P", "--path",help="Output path.",default = '')
+        parser.add_option("-i", "--ifoChannel",help="IFO and channel information.",default = '')
+
+	opts, args = parser.parse_args()
+        return opts
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	#######################################################################
+        ## parse the command line
+        opts = parse_commandline()
+	#sourceDir = 'gaussian_1000_source'
+	#sourceDir = 'gaussian_source_full'
+	sourceDir = opts.source
+	#funct = 2
+	funct = int(opts.fnct)
+	#outDir = 'gaussian_output'
+	#outDir = 'gaussian_T_0_8_50p'
+	outDir = opts.path 
+	#outDir = 'gaussian_1000_output'
+	#overlap = 50.0 #98.0 (default)
+	overlap = float(opts.ol)
+	#decimate = 0
+	decimate = int(opts.decm)
+	
+
+
+	###################################################################
+	accGroup = 'ligo.dev.o2.detchar.nonlin_coup.twochanveto'
+	#accGroup = 'ligo.dev.o1.detchar.nonlin_coup.bcv'
+	check = 1
+	ext = 'txt'
+	option = 2
+	#wd = os.getcwd()
+	wd = commands.getstatusoutput('pwd')
+	wd = wd[1]
+	#print wd
+	lim = commands.getstatusoutput('ulimit -Hn')
+	#currProcessCount = commands.getstatusoutput('lsof -u %s 2>/dev/null | wc -l'%getpass.getuser())
+	lim = int(lim[1])
+	spaceleft = commands.getstatusoutput('df -hT /home/%s/'%getpass.getuser())
+	spaceleft = spaceleft[1]
+	print spaceleft
+	#currProcessCount = int(currProcessCount[1]) 
+	#print lim
+	#print currProcessCount
+	###################################################################
+	#runList = os.listdir(sourceDir)
+	runList =  glob.glob(sourceDir + '/*.' + ext)
+	#print runList
+	if check:
+		doneList = os.listdir(outDir)
+	limit = 100
+
+	k = 1
+	j = 1
+	#flag = 1
+
+	if not os.path.isfile('batch.ini'):
+        	num = open('batch.ini', 'w')
+	        num.write('1')
+        	num.close()
+
+		f = open('list_'+ str(k) + '.txt', 'w')
+		flag = 1
+		for line in runList:
+			if not (j % limit):
+				f.write(line + '\n')
+				f.close()
+				k = k + 1
+				f = open('list_'+ str(k) +'.txt', 'w')
+				flag = 0
+			if flag:
+				f.write(line + '\n')
+			else:
+				flag = 1
+			j = j + 1	
+		f.close()
+	#print runList
+
+	num = open('batch.ini', 'r')
+	number = num.readline()
+	number = number.strip('\n')
+	num.close()	
+
+	#print number
+	if os.path.isfile('list_'+ number + '.txt'):
+		print 'Opening ' + '"list_'+ number + '.txt"'
+		lt = open('list_'+ number + '.txt', 'r')
+		listThr = list(lt)
+		lt.close()
+	else:
+		print 'Reached end of list (or incorrect list file name)...exiting...'
+		sys.exit()
+	#print listThr
+
+	#num = open('batch.ini', 'w')
+	#num.write(str(int(number) + 1))
+	#num.close()
+
+	#print doneList
+	#print ('bicoh_out_300.txt' in doneList)
+	#sys.exit()
+
+	i = 1 + ((int(number) - 1) * 100)
+	
+	if not  outDir == '.':
+		if not os.path.isfile(outDir + '/links.txt'):
+			match = open(outDir + '/links.txt', 'w')
+		else:
+			match = open(outDir + '/links.txt', 'a')
+	else:
+		if not os.path.isfile('links.txt'):
+                        match = open('links.txt', 'w')
+                else:
+                        match = open('links.txt', 'a')
+	#setcmd = 'export CONDOR_REQUIREMENTS="(Memory * 1024) >= ImageSize"'
+	#print "Setting environment variables..."
+	#os.system(setcmd)
+	if outDir == '.':
+		outDirC = ''
+	else:
+		outDirC = outDir + '/'
+	print len(listThr)
+	currProcessCount = 0
+	success = 1
+	print "Submitting jobs..."
+	for line in listThr:
+		fl =  1
+		cPC = currProcessCount
+		#print cPC
+		try:
+			currProcessCount = commands.getstatusoutput('lsof -u %s 2>/dev/null | wc -l'%getpass.getuser())
+			currProcessCount = int(currProcessCount[1])
+			if (cPC > currProcessCount) and (currProcessCount < 5):
+				fl = 0
+			else:
+				print 'Current process count ' + str(currProcessCount) + ' of ' + str(lim) + ' limit...'
+		except:
+			fl = 0
+			success = 0
+			print 'Current process count ' + str(currProcessCount)	
+		if (currProcessCount < lim) and fl:
+			line = line.split('/')
+	                line = line[len(line) - 1]
+			#print line
+			prefix = line.split('.')
+			tag = prefix[len(prefix)-1]
+			tag = tag.strip('\n')
+			tag = tag.strip('\r')
+			line = line.strip('\n')
+			line = line.strip('\r')
+			prefix = prefix[0:len(prefix)-1]
+			pjoin = '.'
+			prefix = pjoin.join(prefix)
+			#print prefix
+			#print tag
+			#prefix = prefix[0]
+			if tag == ext: # may not need this now that this is accounted for with glob
+				if option == 1:
+					#shRun =	'"bicoherence_analysis -G source/' + line + ' -F 3 -w random_seq/seq_552015_2.txt -m 1 -u 14.026610259768070 -P /home/bernard.hall/bispectral_suite/output/ -f 4096 -q 1 -w /home/bernard.hall/bispectral_suite/random_seq/seq_552015_2.txt -l 1 -a 0 -i ' + prefix + '"'
+					shRun = '"bicoherence_analysis -G ' + sourceDir + '/' + line + ' -F ' + str(funct) +' -m 1 -u 14.026610259768070 -P /home/bernard.hall/bispectral_suite/' + outDirC + ' -f 4096 -q 1 -w /home/bernard.hall/bispectral_suite/random_seq/seq_552015_2.txt -T 1 -c 0.8 -d 1 -i ' + prefix  + '"'
+				elif option == 2:
+					shRun = '"bicoherence_analysis -G ' + sourceDir + '/' + line + ' -F ' + str(funct) +' -m 1 -u 14.026610259768070 -P ' + wd + '/' + outDirC + ' -f 4096 -q 1 -w /home/bernard.hall/bispectral_suite/random_seq/seq_552015_2.txt -T 1 -d ' + str(decimate) + ' -i ' + prefix  + ' -O ' + str(overlap) + '"'
+				cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + shRun + ' > ' + outDirC + 'bicoh_out_'+ str(i) +'.txt &'
+				#i = i + 1
+				if check == 1:
+					if not ('bicoh_out_'+ str(i) +'.txt' in doneList):
+						print cmd + '\n'
+						match.write(sourceDir + ' ' + line + ' ' + outDir + ' bicoh_out_' + str(i) + '\n')
+                        			os.system(cmd)
+		                        	if not (i % 10):
+        		                        	time.sleep(5)
+					else:
+						print 'Job already processed...skipping...(bicoh_out_'+ str(i) +'.txt)'
+				else:
+					print cmd + '\n'
+					match.write(sourceDir + ' ' + line + ' ' + outDir + ' bicoh_out_' + str(i) + '\n')
+					os.system(cmd)
+					if not (i % 10):
+						time.sleep(5)
+				i = i + 1
+		else:
+			print 'Process limit reached.  Exiting...'
+			print '(Current process count ' + str(currProcessCount) + ')'
+			#print fl
+			sys.exit()
+	match.close()
+	#success = 0
+	if success:
+		num = open('batch.ini', 'w')
+        	num.write(str(int(number) + 1))
+	        num.close()
+
+	spaceleft = commands.getstatusoutput('df -hT /home/%s/'%getpass.getuser()) # check and report space left on user's account
+	spaceleft = spaceleft[1]
+        print spaceleft
+if __name__ == "__main__":
+    main()

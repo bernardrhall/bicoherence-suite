@@ -1,0 +1,44 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+
+c_directory = glob.glob('cache/*.lcf')
+limit = 10
+i = 1
+outfile = open('cacheList_1.txt','w')
+
+for index, item in enumerate(c_directory):
+	if index > 0:
+		if not index%limit:
+			#print 'true'
+			#print index
+			outfile = open('cacheList_'+str(i)+'.txt','w')
+			item = item.split('/')
+                        item = item[len(item) - 1]
+                        outfile.write(item + '\n')
+			#print index
+			#print 'new'
+		if index%limit:
+			#print index
+			item = item.split('/')
+			item = item[len(item) - 1]
+			outfile.write(item + '\n')
+	else:
+		item = item.split('/')
+                item = item[len(item) - 1]
+                outfile.write(item + '\n')
+		#print 'first'
+	if not (index + 1)%limit:
+		#print 'closing'
+		#print index
+		#print limit%(index+1)
+		#print '________________'
+		outfile.close()
+		i = i + 1

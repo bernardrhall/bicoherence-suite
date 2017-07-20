@@ -1,0 +1,209 @@
+#!/usr/bin/python
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+
+from __future__ import division
+
+import os
+import sys
+import optparse
+import os.path
+import glob
+import time
+
+from bcv import git_version
+
+def parse_commandline():
+    """
+    Parse the options given on the command-line.
+    """
+    parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+    parser.add_option("-e", "--optExepath",
+                      help="Path to compilied bicohDataRead.", default = "bicohDataRead")
+    parser.add_option("-c", "--Central_Time",
+                      help="Central time of the segment to be analyzed.")
+    parser.add_option("-f", "--Channel_A", default = "L1:OAF-CAL_DARM_DQ")
+    #parser.add_option("-f", "--Channel_A", default = "OAF-CAL_DARM_DQ")
+    parser.add_option("-d", "--Segment_Duration", default = 4)
+    parser.add_option("-o", "--outputPath", default = "source")
+    parser.add_option("-w", "--workdir", default = ".")
+
+    opts, args = parser.parse_args()
+    return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+
+def main():
+	## parse the command line
+	opts = parse_commandline()
+	#tadd = 4096
+	tadd = 64
+	#c_directory = os.listdir('cache/*.lcf')
+	workdir = opts.workdir
+	if workdir =='.':
+		dirflag = 1
+	else:
+		dirflag = 0
+	if dirflag:
+		c_directory = glob.glob('cache/*.lcf')
+		outpath = opts.outputPath
+	else:
+		c_directory = glob.glob(workdir + '/cache/*.lcf')
+                outpath = workdir + '/' + opts.outputPath
+		print outpath
+	gwFile = []
+	# Temp --------------------------------
+	#cTime = 1102757206.0  # central time
+	#cTime = 1102809664
+	cTime = float(opts.Central_Time)
+	#fs = float(opts.fs)
+	fchA = opts.Channel_A
+	#fchB = "L1:TCS-ITMY_CO2_ISS_IN_AC_OUT_DQ"
+	#fchB = opts.Channel_B
+	#start_time = 1102809662
+	#end_time = 1102809666
+
+	#tprefix = str(cTime)
+	#tprefix = tprefix[0:5]
+	
+	#print >> sys.stderr, "Time Prefix: %s"%tprefix
+
+	duration = float(opts.Segment_Duration)
+	sTime = cTime - (duration/2)
+	eTime = sTime + duration
+	#tslMin = float(opts.ExperimentTimeMin)
+	#tslMax = float(opts.ExperimentTimeMax)
+	#increment = opts.increment
+
+	#exepath = 'tvarCoherence'
+	exepath = opts.optExepath
+
+	#count = opts.count
+	# -------------------------------------
+
+	#start_time = cTime - ((tsDur + 1)/2)
+	#end_time = cTime + ((tsDur + 1)/2)
+
+	ctSp = str(cTime).split('.')
+	digit = ctSp[0][len(ctSp[0])-5]
+	#print >> sys.stderr, "Digit: %s"%digit
+	#count = 0
+	#pathIndex = 0
+	#print c_directory
+	#sys.exit()
+
+	findFlag = 0
+	for obj in c_directory:
+		#print 'Here!!'
+		path = []
+		#fn = filename[0].split('/')
+                #filename[0] = fn[len(fn)-1]
+		obj = obj.split('/')
+                obj = obj[len(obj)-1]
+		tfilename = obj[0:(len(obj)-4)]
+		filename = tfilename.split("_")
+		#print filename
+		#print >> sys.stderr, "%s"%filename
+		start =float(filename[0])
+		end = float(filename[1])
+		ctSp = str(end).split('.')
+		digit1 = ctSp[0][len(ctSp[0])-5]
+		#print str(start) + ' ' + str(cTime) + ' ' + str(end)
+		#time.sleep(1)
+		if (cTime<=end) and (cTime>=start):
+			print >> sys.stderr, "Found it: %s"%obj
+			findFlag = 1
+			if dirflag:
+				infile = open('cache/' + obj,'r')
+			else:
+				infile = open(workdir + '/cache/' + obj,'r')
+			for item in infile:
+				fullLine = item.split()
+				path.append(fullLine[5])		
+				print >> sys.stderr, "Path(s): %s"%path
+				#framePath = fullLine[5]
+			infile.close()
+			plength = len(path)
+			cnt = 1
+			for precord in path:
+				tprefix = precord.split('/')
+				tprefix = tprefix[len(tprefix) - 1]
+				tprefix = tprefix.split('-')
+				tprefix = tprefix[len(tprefix) - 1]
+				print >> sys.stderr, "Time Prefix: %s"%tprefix
+				qstring = precord+'/*'+tprefix+'['+digit+'-'+digit1+']'+'*.gwf'
+				print >> sys.stderr, "Querry String: %s"%qstring	
+				gw_dir = glob.glob(qstring)
+				gw_dir.sort()
+				#print >> sys.stderr, "Files(s): %s"%gw_dir
+				for objs in gw_dir:
+					fileTimeArr = objs.split("/")
+					fileTimeArr = fileTimeArr[len(fileTimeArr)-1]
+					fileTimeArr = fileTimeArr.split("-")
+					print fileTimeArr
+					fileTime = fileTimeArr[2]
+					print str(cTime) + ' ' + fileTime			
+					#print >> sys.stderr, "Files(s): %s"%fileTime
+					#if (cTime > float(fileTime)):
+					if (sTime >= float(fileTime) and sTime <= float(fileTime)+tadd) or (eTime >= float(fileTime) and eTime <= float(fileTime)+tadd) or (float(fileTime) > sTime and float(fileTime) + tadd < eTime): 
+					#if (cTime > float(fileTime)) and (cTime < (float(fileTime) + tadd)):
+						#gwFile = objs
+						gwFile.append(objs)
+						if (float(fileTime) + tadd) < eTime:
+							print 'Multiple files (end time not contained)...'
+						if float(fileTime) > sTime:
+							print 'Multiple files (start time not contained)...'
+				if not (len(gwFile)==0):
+					print >> sys.stderr, "Files(s): %s"%gwFile
+					#time.sleep(5)
+				else:
+					if cnt == plength:
+						print >> sys.stderr, "WARNING: No file(s) located!"
+						#fdirstring = "bcvCoherTime_Results/nofile_(" + str(count) + ")"
+						#os.mkdir(fdirstring,0775)
+						missing = open('source/'+str(cTime)+'_missing','w')
+						missing.close()
+						sys.exit(1)
+				cnt = cnt + 1 
+	
+	#print >> sys.stderr, "PI: %s"%pathIndex
+	if not findFlag:
+		print >> sys.stderr, "Error: No .lcf file located!"
+                #fdirstring = "bcvCoherTime_Results/nofile_(" + str(count) + ")"
+                #os.mkdir(fdirstring,0775)
+		#time.sleep(2)
+                sys.exit(1)
+
+	#framePath = path[pathIndex]
+	#print len(gwFile)==0
+	for files in gwFile:
+		#frameFile = gwFile.split("/")
+		frameFile = files.split("/")
+		framePath = "/"
+		framePath = framePath.join(frameFile[0:len(frameFile)-1])
+
+		#framePath = " "
+
+		frameFile = frameFile[len(frameFile)-1]
+		print framePath
+		print frameFile
+		#time.sleep(5)
+		#cmd = "source inputfiles/MatlabSetup_R2008a_glnxa64.sh; %s %s %s %s %s %f %f %f %f %f %d"%(exepath,	
+		cmd = "source inputfiles/MatlabSetup_R2008a_glnxa64.sh; %s %s %s %s %f %f %d %s"%(exepath, framePath, frameFile, fchA, sTime, duration, 1, outpath)
+		print cmd
+		print "Reading frame data..."
+		os.system(cmd)
+
+
+if __name__ == "__main__":
+    main()

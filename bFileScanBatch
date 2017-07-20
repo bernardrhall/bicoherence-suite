@@ -1,0 +1,32 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+from bcv import git_version
+
+outDir = '/home/bernard.hall/bispectral_suite/gaussian_output'
+sourceDir = 'gaussian_T_0_9606'
+threshold = 0.945
+#accGroup = 'ligo.dev.o1.detchar.nonlin_coup.bcv'
+accGroup = 'ligo.dev.o2.detchar.nonlin_coup.twochanveto'
+
+runList = os.listdir(sourceDir)
+i = 1
+for line in runList:
+	tag = line.split('.')
+	pre = tag[0]
+	#print tag(2)
+	tag = tag[len(tag)-1]
+	#sys.exit()
+	if (tag == 'mat') and (pre != 'event') and (pre != 'sEvent'):
+		cmd = './bFileScan -p ' + outDir  + ' -f ' + sourceDir + '/' + line + ' -T ' + str(threshold)
+		cmd = '"' + cmd + '"'
+		cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + cmd + ' > ' + outDir + '/bicoh_out_'+ str(i) +'.txt &'
+		print cmd + '\n'
+		os.system(cmd)
+		i = i + 1

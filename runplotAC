@@ -1,0 +1,66 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+import commands
+
+from bcv import git_version
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-o", "--outpath",help="Destination directory.",default = 'gaussian_T_0_8')
+        parser.add_option("-p", "--pubDirRel",help="Relative path of public directory.",default = 'gaussian_T_0_8')
+        parser.add_option("-s", "--samplingRate",help="Time series sampling rate.",default = 16384)
+        parser.add_option("-f", "--fontSize",help="Size of fonts on plot(s).",default = 14)
+
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	opts = parse_commandline()
+	#rdir = 'oplev_L1:PEM-EX_ACC_OPLEV_ETMX_Y_DQ'
+	rdir = opts.outpath
+	matlist = glob.glob('/home/bernard.hall/bispectral_suite/' + rdir  + '/autocoherence*.mat')
+	print matlist
+	#print matlist
+	fs = float(opts.samplingRate)
+	#fs = 2048
+	fontsize = float(opts.fontSize)
+	opath = rdir
+	#opath = 'oplev_L1:PEM-EX_ACC_OPLEV_ETMX_Y_DQ'
+	i = 1
+	num = len(matlist)
+
+	for item in matlist:
+		gps = item.split('/')
+		gps = gps[len(gps)-1]
+		gps = gps.split('_')
+		gps = gps[1:len(gps)]
+		s = '_'
+		gps = s.join(gps)
+		gps = gps.split('.')
+		gps = gps[0:len(gps)-1]
+		gps = s.join(gps)
+		#print gps
+		print 'Processing ' + str(i) + ' of ' + str(num)
+	        cmd = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; plotAC %s %d %d %s %d %s'%(item,fs,fontsize,opath,i,gps)
+        	print cmd
+	        os.system(cmd)
+        	i = i + 1		
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,175 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+from bcv import git_version
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-i", "--inpath",help="Path to analysis directory.",default = 'gaussian_output')
+	parser.add_option("-s", "--tsSource",help="Path to time series source directory.",default = 'gaussian_source_full')
+        parser.add_option("-T", "--tolerance",help="Cluster tolerance.",default = 4)
+	parser.add_option("-o", "--outpath", help="Path to output directory.",default = 'gaussian_output')
+	parser.add_option("-F", "--fontsize", help="Fontsize for graph labels.",default = 14)
+        parser.add_option("-t", "--timeWindow", help="Time window used for study (s).",default = 4)
+        parser.add_option("-q", "--fs", help="Analysis frequency, Hz (after decimation).",default = 4096)
+	parser.add_option("-f", "--fso", help="Original time series sampling rate.",default = 16384)
+        parser.add_option("-M", "--matName", help="Name of matrix to scan.",default = 'bisp')
+        #parser.add_option("-T", "--tolerance", help="Tolerance if doing cluster scan.",default = 4)
+        parser.add_option("-c", "--clusters", help="Do cluster scan, on/off.",default = 1)
+	parser.add_option("-l", "--legend", help="Add legend, on/off.",default = 0)
+	parser.add_option("-d", "--thresh",help="Threshold for strong bicoherence (if set manually).",default = 0.9606)
+	parser.add_option("-O", "--ol",help="Percentage of overlap (0-100).",default = 95.0)
+	parser.add_option("-x", "--channelA",help="First channel used in analysis.",default = 'L1-GDS-CALIB_STRAIN')
+	parser.add_option("-y", "--channelB",help="Second channel used in analysis.",default = '0')
+	parser.add_option("-z", "--channelC",help="Third channel used in analysis.",default = '0')
+	parser.add_option("-A", "--ar",help="Analyze results, off/on.",default = 1)
+	parser.add_option("-B", "--bpr",help="Plot bicoherence results, off/on.",default = 1)
+	parser.add_option("-C", "--cr",help="Check redundancies, off/on.",default = 1)
+	parser.add_option("-D", "--ppsd",help="Plot/calculate PSD, off/on.",default = 1)
+	parser.add_option("-E", "--mhtml",help="Make and publish html page, off/on.",default = 1)
+	parser.add_option("-G", "--txfig",help="Transfer .fig files, off/on.",default = 1)
+	parser.add_option("-r", "--pubroot",help="Root directory of publication path.",default = '/home/bernard.hall/public_html/bicoherence/')
+	parser.add_option("-Q", "--overload",help="Cluster overload threshold.",default = 100)
+	parser.add_option("-p", "--fig2png", help="Create .png of .fig file.",default = 1)
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	## parse the command line
+        opts = parse_commandline()
+	ipath = opts.inpath
+	opath = opts.outpath
+	spath = opts.tsSource
+	mName = opts.matName
+        fontsize = opts.fontsize
+        time_window = opts.timeWindow
+        fs = opts.fs
+	fso = opts.fso
+        findCL = opts.clusters
+        tol = opts.tolerance
+	legend = opts.legend	
+	T = opts.thresh
+	overlap = opts.ol
+	mainChannel = opts.channelA
+	chA = opts.channelB
+	chB = opts.channelC	
+	fpng = opts.fig2png
+
+	if len(opath.split('/')) > 1:
+		popath = opath.split('/')
+		popath = popath[len(popath)-1]
+	else:
+		popath = opath
+	pubPath = opts.pubroot + popath +'/'
+	#experiments = 100
+	runList = glob.glob(ipath + '/bicoh_out*.txt')
+        count = 0
+        for item in runList:
+                count = count + 1
+	experiments = count
+
+	ar = int(opts.ar)
+	bpr = int(opts.bpr)
+	cr = int(opts.cr)
+	ppsd = int(opts.ppsd)
+	mhtml = int(opts.mhtml)
+	######################
+	txfig = int(opts.txfig)
+	########################
+	overload = int(opts.overload)
+
+	if not ar:
+		ret = 0 
+	#analyze results
+	stringA = './analyze_results -p ' + ipath
+	print stringA
+	if ar:
+        	ret = os.system(stringA)
+	#ret = 0
+	#print str(ret)
+	#plot results
+	if not ret:
+		stringP = './bicohPlotResults -i ' + ipath + ' -o ' + opath + ' -l ' + legend + ' -q ' + str(fs) + ' -O ' + str(overload) + ' -p ' + str(fpng)
+		print stringP
+		if bpr:
+        		ret = os.system(stringP)
+	else:
+		print 'Error with "analyze_results"...exiting...'
+		sys.exit()
+	#Check intersections
+	if not ret:
+		if cr:
+			print 'Checking intersections...'
+                	stringC = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; checkRed %s'%(opath) 
+                	print stringC
+                	ret = os.system(stringC)
+        else:
+                print 'Error with "bicohPlotResults"...exiting...'
+                sys.exit()
+	#Analyze PSD
+	if not ret:
+                #stringPSD = './plotPSD -i ' + spath + ' -o ' + opath + ' -p ' + opath + ' -s ' + str(fs)
+		stringPSD = './plotPSD -i ' + spath + ' -o ' + opath + '/output' + ' -p ' + opath + ' -s ' + str(fso)
+                print stringPSD
+		if ppsd:
+                	ret = os.system(stringPSD)
+        else:
+                print 'Error with "checkRed"...exiting...'
+                sys.exit()
+	#publish results (create html)
+	if not ret:
+		stringH = './makeHtml -e ' + str(experiments) + ' -o ' + opath + ' -T ' + str(T) + ' -O ' + str(overlap) + ' -a ' + mainChannel
+		print stringH
+		if mhtml:
+        		ret = os.system(stringH)
+	else:
+		print 'Error with "plotPSD"...exiting...'
+		sys.exit()
+	
+	# transfer results to public path
+	pngList = glob.glob(opath + '/*.png')
+	figList = glob.glob(opath + '/*.fig')
+	fignum = len(figList)
+	j = 1
+	if not os.path.exists(pubPath):
+    		os.makedirs(pubPath)
+	for item in pngList:
+    		print 'Transferring ' + item
+		shutil.copy(item, pubPath) # if error no. 21, make sure destination path exists
+	
+	if not opath == ipath:
+		idatList = glob.glob(ipath + '/*.dat')
+		for item in idatList:
+                	print 'Copying ' + item
+                	shutil.copy(item, opath + '/')
+	
+	datList = glob.glob(opath + '/*.dat')
+
+	for item in datList:
+                print 'Transferring .dat files...' + item
+                shutil.copy(item, pubPath)
+	
+	if txfig:
+		for item in figList:
+                	print 'Transferring .fig files...' + item + '...' + str(j) + ' of ' + str(fignum)
+	                shutil.copy(item, pubPath)
+			j = j + 1
+
+if __name__ == "__main__":
+    main()

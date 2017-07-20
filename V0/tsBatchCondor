@@ -1,0 +1,71 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+import time
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-d", "--directory",help="Directory containing central time files.",default = '.')
+	parser.add_option("-c", "--channel",help="IFO Channel.",default = 'L1:GDS-CALIB_STRAIN')
+	parser.add_option("-s", "--tsDir",help="Name of time-series/source directory.",default = 'source')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	opts = parse_commandline()
+        sourceDir = opts.directory
+	src = opts.tsDir
+	#channel = 'L1:PEM-CS_ACC_OPLEV_ITMX_Y_DQ'
+	channel = opts.channel
+	if sourceDir == '.':
+		sourceDir = ''
+		wdir = sourceDir
+		#readDir = '.'
+	else:
+		wdir = sourceDir
+		sourceDir = sourceDir + '/'
+		#readDir =  sourceDir + '/'
+	accGroup = 'ligo.dev.o2.detchar.nonlin_coup.twochanveto'
+	delaycnt = 20 # number of cycles after which to pause
+	delay = 30 #seconds
+	files = glob.glob(sourceDir + 'centralTimesS[1-9]*.txt')
+	#print files
+	i = 1
+	for item in files:
+		#shRun = '".././tsBatch -t ' + item + ' -c '+ channel +'"'
+		shRun = '"tsBatch -t ' + item + ' -c '+ channel + ' -w ' + wdir + ' -s ' + src + '"'
+		if src == 'source':
+			cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + shRun + ' > ' + sourceDir + 'ts_out_'+ str(i) +'.txt &'
+		else:
+			cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + shRun + ' > ' + sourceDir + 'ts_' + src + '_out_'+ str(i) +'.txt &'
+		print cmd
+		os.system(cmd)
+                if not (i % delaycnt):
+                	time.sleep(delay)
+		i = i + 1
+if __name__ == "__main__":
+    main()

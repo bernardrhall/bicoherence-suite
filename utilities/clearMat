@@ -1,0 +1,31 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+from bcv import git_version
+
+f = open('sEvent.dat')
+events = f.readlines()
+f.close()
+
+i = 0
+for item in events:
+	events[i] = item.rstrip("\n")
+	i = i + 1
+
+matlist = glob.glob('*.mat')
+for item in matlist:
+	if not (item in events):
+		print 'Remove ' + item
+		os.remove(item)		
+	else:
+		print 'Not remove ' + item
+
+#print events

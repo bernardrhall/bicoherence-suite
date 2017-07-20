@@ -1,0 +1,123 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+from bcv import git_version
+
+#runList = glob.glob(ipath + '/*.txt')
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-o", "--outpath",help="Destination directory.",default = 'gaussian_T_0_8')
+	parser.add_option("-i", "--inpath",help="Source (timeseries) directory.",default = 'gaussian_source_full')
+	parser.add_option("-p", "--pubDirRel",help="Relative path of public directory.",default = 'gaussian_T_0_8')
+        parser.add_option("-s", "--samplingRate",help="Time series sampling rate.",default = 4096)
+        parser.add_option("-f", "--fontSize",help="Size of fonts on plot(s).",default = 14)
+
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+		
+	opath = opts.outpath
+	ipath = opts.inpath
+	#opath = 'gaussian_T_0_8'
+	#opath = 'output'
+	#pOutDir = 'bcv_follow_1'
+	pOutDir = opts.pubDirRel
+	#ipath = 'gaussian_source_full'
+	#ipath = 'source'
+	fs = float(opts.samplingRate)
+	fontsize = float(opts.fontSize)
+	duration = 8 # temporary hard-coded
+	durAdd = duration/2
+
+	tsList = glob.glob(ipath + '/*.txt')
+	L = list()
+	tx = 0
+	f = open(opath + '/sEvent.dat')
+	mode = 1
+
+	events = f.readlines()
+
+	f.close()
+
+	num = len(events)
+	i = 1
+
+	for line in events:
+		linePre = line.split('_')
+		if mode == 1:
+			linePre = linePre[0]
+		elif mode ==2:
+			#linePre = linePre[len(linePre)-2:len(linePre)-1]
+			linePre = linePre[len(linePre)-1]
+			linePre = linePre.split('.')
+			linePre = linePre[0:len(linePre)-1]
+			s = '.'
+			linePre = s.join(linePre)
+			#print linePre
+		for item in tsList:
+			if mode == 1:
+				itemPre = item.split('.')
+				itemPre = itemPre[0]
+				itemPre = itemPre.split('/')
+				itemPre = itemPre[1]
+				#print itemPre + ' ' + linePre
+				if itemPre == linePre:
+                                	#print 'Found it!'
+	                                L.append(item + ' ' + line)
+			elif mode == 2:
+				itemPre = item.split('+')
+                        	itemPre = itemPre[0]
+				itemPre = itemPre.split('/')
+        	                itemPre = itemPre[1]
+				itemPre = float(itemPre) + durAdd
+				
+				#print itemPre
+				#print itemPre + ' ' + linePre
+				#print float(itemPre) == float(linePre)
+				if float(itemPre) == float(linePre):
+					#print 'Found it!'
+					L.append(item + ' ' + line)
+
+	for line in L:
+		line = line.split()
+		line = line[0]
+		line = line.split('/')
+		line = line[1]
+		print 'Processing ' + str(i) + ' of ' + str(num)
+		cmd = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; makePSD %s %s %s %f %f'%(opath,ipath,line,fs,fontsize)
+		print cmd
+		os.system(cmd)
+		i = i + 1
+	if tx:
+		pubPath = '/home/bernard.hall/public_html/bicoherence/'+ pOutDir +'/'
+		pngList = glob.glob(opath + '/PSD*.png')
+		for item in pngList:
+                	print 'Transferring ' + item
+			#itemPre = item.split('/')
+			#itemPre = itemPre[1]
+			#print itemPre
+			#item = item.replace('+','\+')
+        	        shutil.copy(item, pubPath)
+
+if __name__ == "__main__":
+    main()

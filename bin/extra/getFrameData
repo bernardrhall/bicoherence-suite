@@ -1,0 +1,1497 @@
+#!/usr/bin/env tclsh
+
+# getFrameData : Retrieve frame data from an LDAS server
+
+# Copyright 2001-2005 (inclusive), 2009, 2012 Peter Shawhan
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#------------------------------------------------------------------------------
+package provide LDASJob 3.0
+package provide ldasjob 3.0
+
+#==============================================================================
+namespace eval ::LDASJob {
+
+    #-- Initialize namespace variables
+    variable helperPipe ""
+    variable jobtags {}
+
+    #-- Commands to be imported with "namespace import ::LDASJob"
+    namespace export LJrun LJstatus LJfill LJwait LJdelete LJend \
+	    LJread LJreaddir LJcopy LJsave LJrestore
+}
+
+
+#==============================================================================
+proc ::LDASJob::LJrun { {jobtag "XxXxXx"} args } {
+##    puts "In LJrun with $jobtag $args"
+
+    ;##- If there were no arguments, print usage information
+    ;##- (Note LJerror is not set in this case)
+    if { [string equal $jobtag "XxXxXx"] } {
+	if { [catch {HelperExec "usage LJrun"} msg] } {
+	    return -code error [lindex $msg 1]
+	} else {
+	    return [lindex $msg 1]
+	}
+    }
+
+    ;##- Bring the global LJerror into scope for all parent routines
+    global LJerror
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global LJerror
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    ;##- Make sure a job with this name does not already exist
+    variable jobtags
+    if { [lsearch -exact $jobtags $jobtag] >= 0 } {
+	set LJerror 1
+	return -code error "A job named \"$jobtag\" already exists"
+    }
+
+    ;##- Make sure there is not already a global variable with the name of 
+    ;##- the jobtag
+    if { [llength [info globals $jobtag]] > 0 } {
+	set LJerror 1
+	return -code error "A global variable named \"$jobtag\" already exists"
+    }
+
+    ;##- Set default local options
+    set wait 1
+    set default_logcmd {puts "LJrun $this(jobtag) is running as $this(jobid)"}
+    set logcmd ""
+
+    ;##- Process arguments, EXCEPT the last one which is supposed to be the
+    ;##- LDAS user command.  Some arguments (-log) are handled locally;
+    ;##- others must be passed along to the helper process
+    set sendcmd {}
+    set option ""
+    foreach arg [lrange $args 0 end-1] {
+
+	if { [regexp -- {^-\S+$} $arg] } {
+	    set option [string range $arg 1 end]
+	    set val ""
+	} else {
+	    set val $arg
+	}
+
+	;##- There should not be any positional arguments in this set of args
+	if { $option == "" } {
+	    set LJerror 1
+	    if { [string equal [string index $jobtag 0] "-"] } {
+		#-- It looks like the user neglected to put the job tag first
+		set msg "First argument to LJrun must be the job tag"
+	    } else {
+		set msg "Syntax error in arguments to LJrun"
+	    }
+	    return -code error $msg		    
+	}
+
+	if { $option == "nowait" } {
+	    set wait 0
+	    set option ""    ;##- To enforce that this option takes no argument
+	} elseif { $option == "log" } {
+	    if { $val == "" || $val == "default" } {
+		set logcmd $default_logcmd
+	    } else {
+		set logcmd $val
+		set option ""
+	    }
+	} else {
+	    lappend sendcmd $arg
+	}
+
+    }
+
+    ;##- Replace "$this" with a reference to the job info array for this job
+    regsub -all {([^\\]\$)this(\W)} $logcmd "\\1${jobtag}\\2" logcmd
+
+    ;##- Do a round of substitutions on the LDAS command (the final argument)
+    ;##- in the scope of the routine which called LJrun
+    set ldascmd [lindex $args end]
+    if { [catch {uplevel 1 [list subst -nobackslashes $ldascmd]} modcmd] } {
+	set LJerror 1
+	return -code error "$modcmd\n   \
+		while performing variable and command substitutions"
+    }
+    lappend sendcmd $modcmd
+
+    ;##- Create a global array with the name of the jobtag, and bring it into
+    ;##- scope in all parent routines
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    ;##- Initialize a few array elements
+    set $jobtag\(jobtag\) $jobtag
+    set $jobtag\(status\) "new"
+
+    ;##- Initialize the "shadow array"
+    variable _shadow_$jobtag
+    array set _shadow_$jobtag [array get $jobtag]
+
+    ;##- Set up traces to make this behave as a fill-on-read, read-only array
+    trace variable ::$jobtag r [list ::LDASJob::ReadTrace $jobtag]
+    trace variable ::$jobtag w [list ::LDASJob::WriteTrace $jobtag]
+    trace variable ::$jobtag u [list ::LDASJob::UnsetTrace $jobtag]
+
+    ;##- Append this jobtag to the list of all jobtags
+    lappend jobtags $jobtag
+
+    ;##- Now send the command to the helper process
+    if { [catch {HelperSend "cwd [pwd]"} msg] || \
+	    [catch {HelperExec [list "submit" $jobtag $sendcmd]} msg] } {
+	#-- Delete the job info array and the shadow array
+	unset $jobtag
+	unset _shadow_$jobtag
+	#-- Remove this job from the complete list of jobtags
+	set index [lsearch -exact $jobtags $jobtag]
+	set jobtags [lreplace $jobtags $index $index]
+	#-- Return with an error code
+	set LJerror 1
+	return -code error $msg
+    }
+
+    set status [lindex $msg 0]
+    set value [lindex $msg 1]
+
+    switch -- $status {
+	"ok" {
+	    ;##- Execution continues below
+	}
+	"fail" {
+	    array set $jobtag $value
+	    set LJerror 1
+	    if { [info exists ${jobtag}(error)] } {
+		return [set ${jobtag}(error)]
+	    } else {
+		return ""
+	    }
+	}
+	default {
+	    if { $status == "error" } {
+		set errmsg $value
+	    } else {
+		set errmsg "LDASJob internal error (bad status: $status)"
+	    }
+	    set LJerror 1
+	    return -code error $errmsg
+	}
+    }
+
+    ;##- At this point, we know that the job has been submitted successfully
+    array set $jobtag $value
+
+    ;##- Execute the log command in the scope of the routine which called LJrun
+    if { ! [string is space $logcmd] } {
+	uplevel 1 "catch { $logcmd }"
+    }
+
+    ;##- If the '-nowait' flag was NOT specified, wait for the job to finish
+    ;##- Note that LJwait sets the global LJerror before it returns
+    if { $wait } {
+	set retval [catch {LJwait $jobtag} value]
+	return -code $retval $value
+    }
+
+    set LJerror 0
+    if { [info exists ${jobtag}(jobid)] } {
+	return [set ${jobtag}(jobid)]
+    } else {
+	return ""
+    }
+}
+
+
+#==============================================================================
+proc ::LDASJob::LJstatus { {jobtag "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJstatus <jobtag>
+
+Returns the status of the specified job ("submitted", "running", "error",
+"done", etc.)
+	}
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    if { [catch {HelperExec "status $jobtag"} msg] } {
+	return -code error $msg
+    }
+
+    set status [lindex $msg 0]
+    set value [lindex $msg 1]
+
+    switch -- $status {
+	"ok" {
+	    return $value
+	}
+	default {
+	    if { $status == "error" } {
+		set errmsg $value
+	    } else {
+		set errmsg "LDASJob internal error (bad status: $status)"
+	    }
+	    return -code error $errmsg
+	}
+    }
+}
+
+
+#==============================================================================
+proc ::LDASJob::LJfill { {jobtag "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJfill <jobtag>
+
+Causes the job info array for the specified job to be filled as much as
+possible.  This is normally not necessary, since LJrun and LJwait fill the
+job info array before returning.
+	}
+    }
+
+    ;##- Bring the global LJerror into scope for all parent routines
+    global LJerror
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global LJerror
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    ;##- Bring the global jobtag array into scope for all parent routines
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    ;##- Silently ignore any error from the helper process; we get what we get
+    if { [catch {HelperExec "fill $jobtag"} msg] } {
+	set LJerror 1
+	return
+    }
+
+    set status [lindex $msg 0]
+    set value [lindex $msg 1]
+
+    switch -- $status {
+	"ok" {
+	    array set $jobtag $value
+	    set LJerror 0
+	    return
+	}
+	"fail" {
+	    array set $jobtag $value
+	    set LJerror 1
+	    return
+	}
+	default {
+	    if { $status == "error" } {
+		set errmsg $value
+	    } else {
+		set errmsg "LDASJob internal error (bad status: $status)"
+	    }
+	    set LJerror 1
+	    return -code error $errmsg
+	}
+    }
+}
+
+
+#==============================================================================
+proc ::LDASJob::LJwait { {jobtag "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJwait <jobtag>
+
+Waits for the specified job to finish, then returns.
+	}
+    }
+
+    ;##- Bring the global LJerror into scope for all parent routines
+    global LJerror
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global LJerror
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    ;##- Bring the global jobtag array into scope for all parent routines
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    if { [catch {HelperExec "wait $jobtag"} msg] } {
+	set LJerror 1
+	return -code error $msg
+    }
+
+    set status [lindex $msg 0]
+    set value [lindex $msg 1]
+
+    switch -- $status {
+	"ok" {
+	    array set $jobtag $value
+	    set LJerror 0
+	    if { [info exists ${jobtag}(jobid)] } {
+		return [set ${jobtag}(jobid)]
+	    } else {
+		return ""
+	    }
+	}
+	"fail" {
+	    array set $jobtag $value
+	    set LJerror 1
+	    if { [info exists ${jobtag}(error)] } {
+		return [set ${jobtag}(error)]
+	    } else {
+		return ""
+	    }
+	}
+	default {
+	    if { $status == "error" } {
+		set errmsg $value
+	    } else {
+		set errmsg "LDASJob internal error (bad status: $status)"
+	    }
+	    set LJerror 1
+	    return -code error $errmsg
+	}
+    }
+}
+
+
+#==============================================================================
+proc ::LDASJob::LJdelete { {jobtag "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJdelete <jobtag>
+
+Deletes the specified job.
+	}
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    variable helperPipe
+
+    ;##- If the helper process is running, send a "delete" instruction
+    if { $helperPipe != "" } {
+
+	if { [catch {HelperExec "delete $jobtag"} msg] } {
+	    return -code error $msg
+	}
+
+	;##- Ignore the return value from the helper process
+    }
+
+    ;##- Delete the job info array
+    if { [llength [info globals $jobtag]] > 0 } {
+	global $jobtag
+	unset $jobtag
+
+	;##- Delete the shadow array too
+	variable _shadow_$jobtag
+	unset _shadow_$jobtag
+    }
+
+    ;##- Remove this job from the complete list of jobtags
+    variable jobtags
+    set index [lsearch -exact $jobtags $jobtag]
+    set jobtags [lreplace $jobtags $index $index]
+
+    return
+}
+
+
+#==============================================================================
+# Instructs the helper process to shut down as soon as practical
+proc ::LDASJob::LJend {} {
+    
+    variable helperPipe
+
+    ;##- If the helper process is not running, just return
+    if { $helperPipe == "" } {
+	return
+    }
+
+    if { [catch {HelperExec "shutdown"} msg] } {
+	return -code error $msg
+    }
+
+    set status [lindex $msg 0]
+    set value [lindex $msg 1]
+
+    switch -- $status {
+	"ok" {
+	    catch { close $helperPipe }
+	    set helperPipe ""
+	    return $value
+	}
+	default {
+	    if { $status == "error" } {
+		set errmsg $value
+	    } else {
+		set errmsg "LDASJob internal error (bad status: $status)"
+	    }
+	    return -code error $errmsg
+	}
+    }
+}
+
+
+#==============================================================================
+# Read the contents of a URL into a variable
+proc ::LDASJob::LJread { {url "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $url "XxXxXx"] } { return {
+Usage:  LJread <url>
+
+Reads the contents of the specified URL and returns them.
+Example:
+   set contents [LJread http://www.ligo.caltech.edu/index.html]
+	}
+    }
+
+    ;##- Make sure URL is non-blank
+    if { [string is space $url] } {
+	return -code error "URL argument is blank"
+    }
+
+    ;##- Make sure url is not a list
+    if { [llength $url] > 1 } {
+	return -code error "LJread cannot handle a list of URLs"
+    }
+
+    ;##- Call the GetUrl routine to do the transfer
+    if { [catch {GetUrl $url} body] } {
+	return -code error $body
+    }
+
+    return $body
+}
+
+
+#==============================================================================
+# Read the contents of a URL into a variable
+proc ::LDASJob::LJreaddir { {url "XxXxXx"} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $url "XxXxXx"] } { return {
+Usage:  LJreaddir <url>
+
+Returns a list of files in the specified directory on an LDAS web server.
+Example:
+   set filelist [LJreaddir http://www.ldas-dev.caltech.edu/ldas_outgoing]
+	}
+    }
+
+    ;##- Make sure URL is non-blank
+    if { [string is space $url] } {
+	return -code error "URL argument is blank"
+    }
+
+    ;##- Make sure url is not a list
+    if { [llength $url] > 1 } {
+	return -code error "LJreaddir cannot handle a list of URLs"
+    }
+
+    ;##- Call the GetUrl routine to do the transfer
+    if { [catch {GetUrl -nocheck $url} body] } {
+	return -code error $body
+    }
+
+    ;##- Make sure this is an Apache directory listing
+    if { ! [regexp -nocase {<title>\s*index of (\S+)\s*</title>} $body \
+	    match indexname] || \
+	    ! [regexp $indexname $url] } {
+	return {}
+    }
+
+    ;##- Parse the body to pick out the directory listing
+    set items {}
+    foreach {match url} [regexp -nocase -all -inline \
+	    {<a *href="([\w\.][^\"]+)">} $body] {
+	if { [regexp {^(?:\./)?(.+/)$} $url match subdir] } {
+	    lappend items [list "dir" $subdir]
+	} else {
+	    lappend items [list "file" $url]
+	}
+    }
+
+    return $items
+}
+
+
+#==============================================================================
+# Copy the contents of a URL to a file
+proc ::LDASJob::LJcopy { {url "XxXxXx"} {file ""} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $url "XxXxXx"] } { return {
+Usage:  LJcopy <url> <file>
+
+Copies the contents of the specified URL to a local file.
+	}
+    }
+
+    ;##- Make sure URL is non-blank
+    if { [string is space $url] } {
+	return -code error "URL argument is blank"
+    }
+
+    ;##- Make sure url is not a list
+    if { [llength $url] > 1 } {
+	return -code error "LJcopy cannot handle a list of URLs"
+    }
+
+    ;##- Make sure destination file is non-blank
+    if { [string is space $file] } {
+	return -code error "Destination file argument is missing"
+    }
+
+    ;##- Call the GetUrl routine to do the transfer
+    if { [catch {GetUrl $url $file} file] } {
+	return -code error $file
+    }
+
+    return $file
+}
+
+
+#==============================================================================
+# Save job info to a file
+proc ::LDASJob::LJsave { {jobtag "XxXxXx"} {file ""} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJsave <jobtag> [<file>]
+
+Saves the info array for the specified job into a file.  If the filename is
+omitted or is a directory, then the jobtag is used for the filename.  The
+default file extension is ".lji" unless explicitly specified.
+	}
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    ;##- Make sure a job with this name exists
+    variable jobtags
+    if { [lsearch -exact $jobtags $jobtag] < 0 } {
+	return -code error "Job \"$jobtag\" does not exist"
+    }
+
+    ;##- Bring the global jobtag array into scope for all parent routines
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    ;##- Force a "fill" to get all available info from the helper proc
+    ;##- (this sets LJerror)
+    if { [catch {LJfill $jobtag} msg] } {
+	return -code error $msg
+    }
+
+    ;##- If $file is a directory or was left blank, set the filename
+    ;##- Also, if no extension was specified, append ".lji"
+    if { [file isdirectory $file] } {
+	set file [file join $file "$jobtag.lji"]
+    } elseif { $file == "" } {
+	set file "$jobtag.lji"
+    } elseif { [file extension $file] == "" } {
+	append file ".lji"
+    }
+
+    ;##- Open the file for output
+    if { [catch {open $file w} fid] } {
+	return -code error $fid
+    }
+
+    ;##- Write the job info array to the file
+    puts $fid [array get $jobtag]
+
+    ;##- Close the file
+    close $fid
+
+    return
+}
+
+
+#==============================================================================
+# Restore job info from a file
+proc ::LDASJob::LJrestore { {jobtag "XxXxXx"} {file ""} } {
+
+    ;##- If there were no arguments, print usage information
+    if { [string equal $jobtag "XxXxXx"] } { return {
+Usage:  LJrestore <jobtag> [<file>]
+
+Recreates a job info array from a file previously created using LJsave.  If the
+filename is omitted or is a directory, then the jobtag is used for the filename.
+A default file extension ".lji" is assumed unless explicitly specified.
+	}
+    }
+
+    ;##- Strip off any spaces and colons from the jobtag
+    set jobtag [string trim $jobtag ": "]
+
+    ;##- Make sure a job with this name does not already exist
+    variable jobtags
+    if { [lsearch -exact $jobtags $jobtag] >= 0 } {
+	return -code error "A job named \"$jobtag\" already exists"
+    }
+
+    ;##- Make sure there is not already a global variable with the name of 
+    ;##- the jobtag
+    if { [llength [info globals $jobtag]] > 0 } {
+	return -code error "A global variable named \"$jobtag\" already exists"
+    }
+
+    ;##- If $file is a directory or was left blank, set the filename
+    ;##- Also, if no extension was specified, append ".lji"
+    if { [file isdirectory $file] } {
+	set file [file join $file "$jobtag.lji"]
+    } elseif { $file == "" } {
+	set file "$jobtag.lji"
+    } elseif { [file extension $file] == "" } {
+	append file ".lji"
+    }
+
+    ;##- Open the file for reading
+    if { [catch {open $file r} fid] } {
+	return -code error $fid
+    }
+
+    ;##- Read the job info array from the file
+    if { [catch {read $fid} info] } {
+	catch {close $fid}
+	return -code error "Error reading job info file $file"
+    }
+
+    ;##- Close the file
+    close $fid
+
+    ;##- Create a global array with the name of the jobtag, and bring it into
+    ;##- scope in all parent routines
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    ;##- Set the contents of the job info array
+    if { [catch {array set $jobtag $info}] } {
+	catch { unset $jobtag }
+	return -code error "$file is corrupted, or is not a job info file"
+    }
+
+    ;##- Initialize the "shadow array"
+    variable _shadow_$jobtag
+    array set _shadow_$jobtag [array get $jobtag]
+
+    ;##- Set up traces to make this behave as a read-only array
+    ;##- (but no read trace, because we have no way of filling)
+    trace variable ::$jobtag w [list ::LDASJob::WriteTrace $jobtag]
+    trace variable ::$jobtag u [list ::LDASJob::UnsetTrace $jobtag]
+
+    ;##- Append this jobtag to the list of all jobtags
+    lappend jobtags $jobtag
+
+    return
+}
+
+
+#==============================================================================
+# Do a http transfer to memory or to a file
+proc ::LDASJob::GetUrl { args } {
+
+    set url ""
+    set file ""
+    set mover GetUrlWhole
+
+    ;##- Parse arguments
+    foreach arg $args {
+	switch -- $arg {
+	    "-nocheck" { set mover http::geturl }
+	    default {
+		if { $url == "" } {
+		    set url $arg
+		} elseif { $file == "" } {
+		    set file $arg
+		} else {
+		    return -code error "Too many positional arguments passed\
+			    to LDASJob::GetUrl"
+		}
+	    }   
+	}
+    }
+
+    package require http
+
+    ;##- We may need to loop, if there is URL redirection
+    set origurl $url
+    while { 1 } {
+
+	;##- If writing to a file, open it now
+	if { $file != "" } {
+	    ;##- If a directory was specified for output, choose the filename
+	    if { [file isdirectory $file] } {
+		;##- Take the filename from the URL
+		if { ! [regexp {^(?:\w+:/{1,2})?[^/].*/([^/]+)$} $url \
+			match basename] || [string match {~*} $basename] } {
+		    return -code error \
+			    "Cannot determine filename from url $url"
+		}
+		set file [file join $file $basename]
+		if { [file isdirectory $file] } {
+		    return -code error "Cannot create file $file because\
+			    it already exists as a directory"
+		}
+	    }
+
+	    if { [catch {open $file w} fid] } {
+		return -code error $fid
+	    }
+	    fconfigure $fid -translation binary -buffersize 65536
+	}
+
+	;##- Use our own timeout mechanism, which triggers if the
+	;##- transfer stalls for 60 seconds
+	set key [clock clicks]
+	variable doneFlag
+	variable timeoutEvent
+	set doneFlag($key) ""
+	set timeoutEvent($key) \
+		[after 60000 [namespace code \
+		"set timeoutEvent($key) \[after 0 set doneFlag($key) timeout\]"]]
+
+	;##- Set up the http transfer to run in the background when we enter
+	;##- the event loop; this is needed to implement our timeout mechanism
+	if { $file != "" } {
+	    ;##- Copy contents directly to a file
+	    if { [catch {$mover $url -channel $fid \
+		    -command "::LDASJob::HttpDone $key" \
+		    -progress "::LDASJob::HttpProgress $key"} httpToken] } {
+		;##- Close the file and delete it
+		catch { close $fid }
+		catch { file delete $file }
+		return -code error $httpToken
+	    }
+	} else {
+	    ;##- Read contents into memory
+	    if { [catch {$mover $url \
+		    -command "::LDASJob::HttpDone $key" \
+		    -progress "::LDASJob::HttpProgress $key"} httpToken] } {
+		return -code error $httpToken
+	    }
+	}
+
+	;##- See if the transfer has already generated an error
+	upvar #0 $httpToken httpstate
+	if { [info exists httpstate(status)] \
+		&& $httpstate(status) == "error" } {
+	    set doneFlag($key) "error"
+	}
+
+	if { $doneFlag($key) == "" } {
+	    ;##- Enter the event loop until the doneFlag is set
+	    vwait ::LDASJob::doneFlag($key)
+	}
+
+	;##- Cancel the pending timeout
+	after cancel $timeoutEvent($key)
+
+	if { $file != "" } {
+	    ;##- Close the output file
+	    catch { close $fid }
+	}
+
+	;##- Check if there was a timeout
+	if { $doneFlag($key) == "timeout" } {
+	    set currentsize [http::size $httpToken]
+	    ;##- Clean up fileevents, etc.
+	    http::Finish $httpToken "" 1
+	    http::cleanup $httpToken
+	    if { $currentsize > 0 } {
+		return -code error \
+			"Timeout after transferring $currentsize bytes"
+	    } else {
+		return -code error \
+			"Timeout occurred without transferring any data"
+	    }
+	}
+
+	;##- Parse the "meta" array, if it exists
+	if { [info exists httpstate(meta)] } {
+	    array set httpmeta $httpstate(meta)
+	} else {
+	    set httpmeta(null) ""
+	}
+
+	;##- Check the transfer status
+	if { $httpstate(status) != "ok" } {
+	    if { [info exists httpstate(error)] } {
+		set errmsg $httpstate(error)
+	    } else {
+		set errmsg "http status is $httpstate(status)"
+	    }
+	    ;##- Delete the output file, if any
+	    if { $file != "" } { catch { file delete $file } }
+	    return -code error $errmsg
+	}
+
+	;##- Check the HTTP status code
+	set status $httpstate(http)
+	regexp {^(\S+) (\S+) (.+)$} $status match httpver statcode stattext
+
+	if { [string equal $statcode "200"] } {
+	    ;##- We got the file we wanted!
+	    set body $httpstate(body)
+	    unset $httpToken
+	    break   ;##- Break out of the while loop
+	}
+
+	;##- Check for a URL redirection
+	if { [string match "3*" $statcode] && \
+		[info exists httpmeta(Location)] } {
+	    set url $httpmeta(Location)
+	    unset $httpToken
+	    continue   ;##- Go back and read from the revised URL
+	}
+
+	;##- If we get here, then there was an error
+	unset $httpToken
+	;##- Delete the output file, if any
+	if { $file != "" } { catch { file delete $file } }
+	return -code error "Unable to read $origurl: $statcode $stattext"
+    
+    }  ;##- End of while loop
+
+    if { $file != "" } {
+	return $file
+    } else {
+	return $body
+    }
+}
+
+
+##=========================================================================
+proc ::LDASJob::GetUrlWhole { url args } {
+###    puts "In GetUrlWhole, url is $url"
+
+    set lastsize -2
+    set cursize -1
+    set repx4096 0
+    set nloop 0
+
+    while { $cursize != $lastsize || $repx4096 < 10 } {
+
+	set error ""
+
+	incr nloop
+	;##- PSS Hack: this timeout doesn't do an appropriate thing,
+	;##- partly because Apache seems not to report the sizes of
+        ;##- text files, so for now, set the loop limit very high
+	if { $nloop > 100 } {
+	    set error "timeout waiting for file"
+	}
+
+	set lastsize $cursize
+	set cursize 0
+	if {[catch {eval http::geturl $url -validate 1} httpvar]} {
+	    set error $httpvar
+	}
+
+	if { ! [string is space $error] } {
+	    ;##- Create a fake http token
+	    if {![info exists http::http(uid)]} {
+		set http::http(uid) 0
+	    }
+	    set token ::http::[incr http::http(uid)]
+###	    puts "token is $token"
+	    array set $token [list \
+		state           eof \
+		meta            {} \
+		currentsize     0 \
+		totalsize       0 \
+		type            {} \
+		body            {} \
+		status          "error" \
+		error           "GeturlWhole $error" \
+		http            "GeturlWhole 404 $error" \
+	    ]
+	    return $token
+	}
+
+	set httpmsg [set $httpvar\(http\)]
+	set httpcode [lindex $httpmsg 1]
+###	puts [array get ::$httpvar]
+	set cursize [set $httpvar\(totalsize)]
+###	puts "Loop $nloop size: $cursize"
+	http::cleanup $httpvar
+	unset httpvar
+
+	;##- If the size is an exact multiple of 4096 bytes (the default Tcl
+	;##- background-copy buffer size), then it is likely that LDAS is
+	;##- still in the middle of writing the file.  In this case we want
+	;##- to wait until the size is stable for 10 loop iterations.
+	if { [expr {$cursize % 4096}] == 0 && \
+		! [string match "3*" $httpcode] && \
+		( $cursize > 0 || $nloop <= 2 ) } {
+	    if { $cursize == $lastsize } {
+		incr repx4096
+	    } else {
+		set repx4096 1
+	    }
+	} else {
+	    ;##- No special treatment
+	    set repx4096 999
+	}
+
+	;##- Sleep for a while before checking the size again.
+	set ::LDASJob::getUrlWholeFlag($url) 0
+###	puts "Sleeping in GetUrlWhole"
+	after 1000 "set ::LDASJob::getUrlWholeFlag($url) 1"
+	vwait ::LDASJob::getUrlWholeFlag($url)
+	unset ::LDASJob::getUrlWholeFlag($url)
+    }
+
+    ;##- Now actually retrieve the file
+    set httpvar [eval http::geturl $url $args]
+
+    ;##- Check the size again
+    set actualsize [set $httpvar\(totalsize)]
+###    puts "Actual size: $actualsize"
+    if { $actualsize > $cursize } {
+###	BigMessageBox -icon warning -title "File changed size" -message \
+###		"WARNING: The size of $url changed while it was being\
+###		downloaded!"
+    }
+
+###    ;##- Finally, make sure the size didn't change again
+###    set httpvar2 [eval http::geturl $url -validate 1]
+###    set checksize [set $httpvar2\(totalsize)]
+###    http::cleanup $httpvar2
+###    unset httpvar2
+###    puts "Check size: $checksize"
+
+    return $httpvar
+}
+
+
+##=========================================================================
+proc ::LDASJob::HttpDone { key token {error ""} } {
+
+    variable doneFlag
+    variable timeoutEvent
+
+    ;##- Cancel the pending timeout event
+    after cancel $timeoutEvent($key)
+
+    upvar #0 $token httpstate
+    set url $httpstate(url)
+
+    if { $error == "" } {
+	set doneFlag($key) "ok"
+    } else {
+	set doneFlag($key) "error"
+	set httpstate(status) "error"
+	set httpstate(error) $error
+    }
+    return
+}
+
+
+##=========================================================================
+proc ::LDASJob::HttpProgress { key token total sofar } {
+
+    variable doneFlag
+    variable timeoutEvent
+
+    ;##- Cancel the pending timeout event, and reset it
+    after cancel $timeoutEvent($key)
+    set timeoutEvent($key) \
+	    [after 60000 [namespace code \
+	    "set timeoutEvent($key) \[after 0 set doneFlag($key) timeout\]"]]
+
+    return
+}
+
+
+#==============================================================================
+proc ::LDASJob::StartHelper {} {
+##    puts "In ::LDASJob::StartHelper"
+
+    if { [ catch {open "|LDASJobH" r+} pipe ] } {
+	return -code error "Could not start LDASJob helper process (LDASJobH)"
+    }
+
+    variable helperPipe $pipe
+
+    puts $pipe "protocol 2"
+    flush $pipe
+    if { [gets $helperPipe msg] < 0 } {
+	return -code error \
+		"Unable to negotiate protocol with helper process (LDASJobH)"
+    }
+    if { [lindex $msg 0] != "ok" } {
+	return -code error [lindex $msg 1]
+    }
+
+    puts $pipe "volatiles"
+    flush $pipe
+    if { [gets $helperPipe msg] < 0 } {
+	return -code error "Unable to get list of volatiles from\
+		helper process (LDASJobH)"
+    }
+    variable volatiles [lindex $msg 1]
+
+    return
+}
+
+
+#==============================================================================
+proc ::LDASJob::HelperSend { command } {
+##    puts "In ::LDASJob::HelperSend $command"
+
+    variable helperPipe
+
+    ;##- If the helper process is not running, start it now
+    if { $helperPipe == "" } {
+	if { [catch {StartHelper} errmsg] } {
+	    return -code error $errmsg
+	}
+    }
+
+    puts $helperPipe $command
+    flush $helperPipe
+
+    return
+}
+
+
+#==============================================================================
+proc ::LDASJob::HelperExec { command } {
+##    puts "In ::LDASJob::HelperExec $command"
+
+    if { [catch {HelperSend $command} errmsg] } {
+	return -code error $errmsg
+    }
+
+    variable helperPipe
+
+    if { [gets $helperPipe msg] < 0 } {
+	return -code error \
+		"Message from helper process (LDASJobH) was blank"
+    }
+
+    while { ! [info complete $msg] && [gets $helperPipe line] >= 0 } {
+	append msg "\n" $line
+    }
+
+    ;##- Check whether we got a complete message
+    if { ! [info complete $msg] } {
+	return -code error \
+		"Message from helper process (LDASJobH) was incomplete"
+    }
+
+    return $msg
+}
+
+
+#==============================================================================
+proc ::LDASJob::ReadTrace { jobtag name1 name2 op } {
+# Note that ReadTrace sets LJerror=0 if job succeeded or has not yet finished,
+# and sets LJerror=1 if the job failed (or if there is some software error)
+##    puts "In ReadTrace with $jobtag $name1 $name2 $op"
+
+    ;##- Bring the global LJerror into scope for all parent routines
+    global LJerror
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global LJerror
+    }
+
+    ;##- Make sure this is a global array
+    if { $name2 == "" } {
+	set LJerror 1
+	return -code error "LDASJob internal error in ReadTrace:\
+		$name1 is not an array"
+    }
+    if { [llength [info globals $jobtag]] == 0 } {
+	set LJerror 1
+	return -code error "LDASJob internal error in ReadTrace:\
+		$jobtag is not a global"
+    }
+
+    ;##- Bring the global jobtag array into scope
+    global $jobtag
+    for { set ilevel 1 } { $ilevel < [info level] } { incr ilevel } {
+	uplevel $ilevel global $jobtag
+    }
+
+    ;##- Now calculate the requested array element
+    switch -- $name2 {
+
+	"jobtag" {
+	    set $jobtag\(jobtag\) $jobtag
+	    ;##- Note that LJerror is not set one way or the other in this case
+	    return
+	}
+
+	default {
+
+	    ;##- Most elements are static once set; for these, we don't need
+	    ;##- to query the helper process.  (But note that we will do an
+	    ;##- LJfill below anyway!)
+	    variable volatiles
+	    if { [lsearch -exact $volatiles $name2] < 0 \
+		    && [info exists $jobtag\($name2\)] } {
+		;##- Execution continues below
+
+	    } elseif { [catch {HelperExec "query $jobtag $name2"} msg] } {
+		set LJerror 1
+		return -code error $msg
+
+	    } elseif { [lindex $msg 0] == "ok" } {
+		set $jobtag\($name2\) [lindex $msg 1]
+		;##- Execution continues below
+
+	    } else {
+		;##- Can't get the value for this element
+		set LJerror 1
+		return -code error [lindex $msg 1]
+	    }
+
+	    ;##- Do an LJfill to get all available information about the job.
+	    ;##- LJfill also sets LJerror depending on whether job succeeded
+	    ;##- (or is still running), or has failed
+	    if { [catch {LJfill $jobtag} errmsg] } {
+		return -code error $errmsg
+	    }
+
+	    return
+	}
+
+    } ;##- End of switch
+}
+
+
+#==============================================================================
+proc ::LDASJob::WriteTrace { jobtag name1 name2 op } {
+##    puts "In WriteTrace with $jobtag $name1 $name2 $op"
+
+    ;##- Make sure this is a global array
+    if { $name2 == "" } {
+	return -code error "LDASJob internal error in WriteTrace:\
+		$jobtag is not an array"
+    }
+    if { [llength [info globals $jobtag]] == 0 } {
+	return -code error "LDASJob internal error in WriteTrace:\
+		$jobtag is not a global"
+    }
+
+    ;##- Bring the global jobtag array into scope
+    global $jobtag
+
+    ;##- Determine the namespace of the calling routine
+    set namespace [uplevel 1 namespace current]
+
+    ;##- If the calling routine is not in the namespace ::LDASJob, then it is
+    ;##- not allowed to set this array element.  So restore the previous value
+    ;##- (if any) using the shadow array, and return with an error message.
+
+    if { $namespace != "::LDASJob" } {
+
+	;##- If the previous value was saved in the shadow array, restore it
+	variable _shadow_$jobtag
+	if { [info exists _shadow_$jobtag\($name2\)] } {
+	    set $jobtag\($name2\) [set _shadow_$jobtag\($name2\)]
+	} else {
+	    unset $jobtag\($name2\)
+	}
+	;##- Return an error
+	return -code error "$jobtag is a read-only job info array"
+    }
+
+    ;##- At this point, we know that the array element was set by a procedure
+    ;##- in the ::LDASJob namespace, which is permitted.  Make a shadow copy
+    ;##- so that we can restore it in the future if necessary.
+
+    ;##- Create the shadow array if it does not yet exist
+    if { [llength [info vars _shadow_$jobtag]] == 0 } {
+	variable _shadow_$jobtag
+    }
+
+    ;##- Save the value
+    set _shadow_$jobtag\($name2\) [set $jobtag\($name2\)]
+
+    return
+}
+
+
+#==============================================================================
+proc ::LDASJob::UnsetTrace { jobtag name1 name2 op } {
+##    puts "In UnsetTrace with $jobtag $name1 $name2 $op"
+
+    ;##- *** NOTE: It turns out that any error raised in an unset trace is NOT
+    ;##- passed back to the routine which triggered the trace, unlike read and
+    ;##- write traces.  (This behavior is accurately described deep within the
+    ;##- Tcl/Tk documentation.)  Therefore, all the "return -code error ..."
+    ;##- statements below actually have no effect.  There are left there just
+    ;##- to show the behavior I would have liked.
+
+    ;##- Make sure this is a global array
+    if { $name2 != "" && [llength [info globals $jobtag]] == 0 } {
+	return -code error "LDASJob internal error in UnsetTrace:\
+		$jobtag is not a global"
+    }
+
+    ;##- Bring the global jobtag array into scope
+    global $jobtag
+
+    ;##- Determine the namespace of the calling routine
+    set namespace [uplevel 1 namespace current]
+
+    ;##- Routines outside of the ::LDASJob namespace are permitted to unset
+    ;##- individual elements (EXCEPT the "jobtag" and "status" elements),
+    ;##- but are not permitted to unset the entire array.
+
+    if { $namespace != "::LDASJob" } {
+
+	set msg ""
+	if { $name2 == "" } {
+	    variable _shadow_$jobtag
+
+	    ;##- Restore the entire array
+	    if { [info exists _shadow_$jobtag] } {
+		array set $jobtag [array get _shadow_$jobtag]
+	    }
+
+	    ;##- Re-establish the "shadow array"
+	    variable _shadow_$jobtag
+	    array set _shadow_$jobtag [array get $jobtag]
+
+	    ;##- Re-establish the traces
+	    trace variable ::$jobtag r [list ::LDASJob::ReadTrace $jobtag]
+	    trace variable ::$jobtag w [list ::LDASJob::WriteTrace $jobtag]
+	    trace variable ::$jobtag u [list ::LDASJob::UnsetTrace $jobtag]
+
+	    return -code error "You cannot unset an entire job info array"
+	}
+
+	if { $name2 == "jobtag" || $name2 == "status" } {
+	    variable _shadow_$jobtag
+
+	    ;##- Restore just the one array element that was unset
+	    if { [info exists _shadow_$jobtag\($name2\)] } {
+		set $jobtag\($name2\) [set _shadow_$jobtag\($name2\)]
+	    }
+
+	    return -code error \
+		    "You cannot unset the '$name2' element of a job info array"
+	}
+
+    }
+
+    return
+}
+
+
+#==============================================================================
+proc bgerror { err } {
+
+    global errorInfo
+
+    puts stderr "An internal error has occurred in the LDASJob.tcl library."
+    puts stderr "Please send the following information to\
+	    shawhan_p@ligo.caltech.edu:"
+
+    if { [string equal $errorInfo ""] } {
+	puts stderr "message passed to bgerror is:\n$err\n"
+    } else {
+	puts stderr "errorInfo is:\n$errorInfo\n"
+    }
+
+    exit 1
+}
+
+
+#==============================================================================
+
+
+#==============================================================================
+# The following commands are executed immediately when this file is sourced,
+# i.e. when you do 'package require LDASJob'
+
+namespace import ::LDASJob::*
+
+#-- Process command-line arguments.  If "-manager <address>" is specified, set
+#-- the LDASMANAGER environment variable to <address>, so it will be used by
+#-- any LJrun command for which the manager is not explicitly specified; also
+#-- remove these two arguments from ::argv.  Set the variables "1", "2", etc.
+#-- to the other command-line arguments (if any) so that they can be referred
+#-- to as "$1", "$2", etc.  Also set "#argv" to indicate the length of the
+#-- (modified) argument list so that it can be referred to as "${#argv}".
+#-- Revise argc as well!
+
+if { [info exists ::argv] } {
+    set nargs 0
+    set option ""
+    set newargv {}
+    foreach arg $::argv {
+	switch -glob -- $arg {
+	    "-manager" { set option "manager" }
+
+	    "-*" {
+		if { $option == "manager" } {
+		    puts stderr "An address or shorthand designation must be\
+			    specified after the -manager flag"
+		    exit 9
+		} else {
+		    lappend newargv $arg
+		    incr nargs
+		    set $nargs $arg
+		}
+	    }
+
+	    default {
+		if { $option == "manager" } {
+		    set ::env(LDASMANAGER) $arg
+		    set option ""
+		} else {
+		    lappend newargv $arg
+		    incr nargs
+		    set $nargs $arg
+		}
+	    }
+
+	}
+    }
+    if { $option == "manager" } {
+	puts stderr "An address or shorthand designation must be specified\
+		after the -manager flag"
+	exit 9
+    }
+
+    set ::argv $newargv
+    set ::argc [llength $::argv]
+    set #argv $nargs
+    unset nargs option newargv
+    if { [info exists arg] } { unset arg }
+}
+
+#-- Create "setenv" and "printenv" procs, by analogy with csh
+proc setenv { {var ""} {value ""} args } {
+    if { [llength $args] > 0 } {
+	return -code error "setenv: Too many arguments."
+    }
+    if { $var != "" } {
+	set ::env($var) $value
+    } else {
+	return [printenv]
+    }
+    return
+}
+
+proc printenv { {var ""} args } {
+    if { [llength $args] > 0 } {
+	return -code error "printenv: Too many arguments."
+    }
+    if { $var == "" } {
+	set output ""
+	foreach var [lsort [array names ::env]] {
+	    append output "${var}=$::env($var)\n"
+	}
+	if { [info exists var] } { unset var }
+	return $output
+    } elseif { [info exists ::env($var)] } {
+	return $::env($var)
+    } else {
+	return -code error
+    }
+}
+
+
+#------------------------------------------------------------------------------
+proc PrintUsage {} {
+    puts ""
+    puts {Usage:  getFrameData <server> <frametype> <times> <channel(s)> [<chantype>]}
+    puts ""
+    puts "<server> is typically 'lho', 'cit', etc."
+    puts "<frametype> is typically 'R', 'RDS_R_L1', etc."
+    puts "<times> must be a range, e.g. '715023200-715023300'."
+    puts "<channel(s)> can be a list separated by commas and/or spaces."
+    puts "The optional <chantype> can be 'proc' to get proc data."
+    puts ""
+}
+
+#-- Set defaults
+set chantype "adc"
+
+#-- Check number of command-line arguments
+if { $argc < 4 || $argc > 5 } { PrintUsage; exit 1 }
+
+#-- Parse command-line arguments
+foreach {server frametype times channels} $argv break
+if { $argc >= 5 } { set chantype [lindex $argv 4] }
+
+#-- Modify the end time for the LDAS job, since LDAS, by convention, includes
+#-- the full second of data which begins at the end time you specify
+if { [regexp {^(\d+)-(\d+)$} $times - tstart tstop] } {
+    set tstop [expr {$tstop-1}]
+    set times "$tstart-$tstop"
+} else {
+    puts "Invalid format for times argument"
+    exit 3
+}
+
+#-- Construct the LDAS command and submit the job
+LJrun job -manager $server -log {
+    getFrameData -returnprotocol http -outputformat frame
+    -framequery {$frametype {} {} $times ${chantype}($channels)}
+}
+
+#-- Check whether job was successful
+if $LJerror {
+    puts "LDAS job failed!  Error message is:"
+    puts $job(error)
+    exit 2
+}
+
+#-- Download output file(s)
+foreach url $job(outputs) {
+    set file [file tail $url]
+    puts -nonewline "Downloading $file..."
+    flush stdout
+    if [catch {LJcopy $url $file} errmsg] {
+	puts " Error: $errmsg"
+    } else {
+	puts " Done"
+    }
+}

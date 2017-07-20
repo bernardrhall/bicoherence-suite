@@ -1,0 +1,18 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+from bcv import git_version
+
+directory = 'hveto_1_nv/output/'
+accGroup = 'ligo.dev.o2.detchar.nonlin_coup.twochanveto'
+cmd = '"source inputfiles/MatlabSetup_R2008a_glnxa64.sh; ./matArchive %s"'%(directory)
+cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + cmd + ' > ' + directory + 'compression_out.txt &'
+print cmd
+
+os.system(cmd)

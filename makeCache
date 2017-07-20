@@ -1,0 +1,81 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-s", "--segmentFile",help="Text file with segments to search.",default = 'segments.txt')
+	#parser.add_option("-o", "--opath",help="Output path.",default = '.')
+	parser.add_option("-w", "--wdir",help="Working directory.",default = '.')
+	parser.add_option("-t", "--frametype",help="Frame type.",default = 'L1_R')
+	parser.add_option("-o", "--obs",help="Observatory (e.g., L or H)",default = 'L')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+        sFile = opts.segmentFile
+	#outpath = opts.opath
+	workdir = opts.wdir
+	
+	segments = open(sFile, 'r')
+	Segs = segments.readlines()
+	segments.close()
+	if workdir == '.':
+		dirflag = 1
+	else:
+		dirflag = 0
+	##########debug
+	br = 0 #set to 0 for normal functioning. Otherwise, set to 1 to stop after first cycle
+	######################	
+	#tpe = 'L1_R'
+	tpe = opts.frametype
+	obs = opts.obs
+	#tpe = 'L1_HOFT_C00'
+	for line in Segs:
+		line = line.split()
+		start = line[0]
+		end = line[1]
+		if dirflag:
+			namestring = 'cache/' + start + '_' + end + '.lcf'
+		else:
+			namestring = workdir + '/cache/' + start + '_' + end + '.lcf'
+			print namestring
+		cmd = '/usr/bin/gw_data_find --observatory ' + obs + ' --frame-cache  --url-type file --gps-start-time ' + start + ' --gps-end-time ' + end + ' --output ' + namestring + ' --type ' + tpe
+		#cmd = '/usr/bin/gw_data_find --observatory L --frame-cache  --url-type file --gps-start-time ' + start + ' --gps-end-time ' + end + ' --output ' + namestring + ' --type L1_R' 
+        	#cmd = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; ./list_analyze %s %d'%(path,tol)
+        	print cmd
+        	os.system(cmd)
+		if br:
+			sys.exit()
+	#segments.close()
+	mccmd = './makeCacheList'
+	print 'Making cache list(s)...'
+	os.system(mccmd)
+if __name__ == "__main__":
+    main()
+

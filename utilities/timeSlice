@@ -1,0 +1,63 @@
+#!/usr/bin/python
+
+from __future__ import division
+
+import os
+import sys
+import optparse
+import os.path
+import glob
+import time
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+	parser = optparse.OptionParser()
+
+        parser.add_option("-i", "--inputFile",help="Input file.",default ='times_ch4.txt')
+        parser.add_option("-s", "--segmentLength",help="Length of segments (s).",default = 12)
+        parser.add_option("-f", "--samplingRate",help="Sampling rate (Hz).",default = 16384)
+	parser.add_option("-o", "--outFile",help="Output file (add correct path if desired).",default ='segments.txt')
+
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	opts = parse_commandline()
+	infile = open(opts.inputFile,'r')
+	lsegment = infile.readlines()
+	infile.close()
+	fs = opts.samplingRate
+	sample = 1/fs
+	slength = opts.segmentLength
+	outfile = open(opts.outFile,'w')
+	for item in lsegment:
+		item = item.split()
+		start = float(item[0])
+		end = float(item[1])
+		while (start + slength) < end:
+			sEnd = start + slength
+			#print '%.6f'%start + ' ' + '%.6f'%sEnd
+			line = '%.6f'%start + ' ' + '%.6f'%sEnd
+			outfile.write(line + '\n')
+			start = sEnd + sample	
+		#print '%.6f'%start + ' ' + '%.6f'%end
+		line = '%.6f'%start + ' ' + '%.6f'%end
+		outfile.write(line)		
+	outfile.close()
+	print "Done!"
+
+if __name__ == "__main__":
+    main()	

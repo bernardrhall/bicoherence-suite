@@ -1,0 +1,231 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-o", "--outpath",help="Output directory.",default = 'gaussian_T_0_95')
+	parser.add_option("-n", "--name",help="Name of analysis output/results directory.",default = 'output')
+	parser.add_option("-i", "--inpath",help="Input directory.",default = 'gaussian_T_0_95')
+        parser.add_option("-T", "--thresh",help="Threshold for strong bicoherence (if set manually).",default = 0.9606)
+	parser.add_option("-O", "--ol",help="Percentage of overlap (0.0-100.0).",default = 95.0)
+	parser.add_option("-e", "--experiments",help="Number of experiments done.")
+	parser.add_option("-t", "--tolerance",help="Cluster tolerance.",default = 4)
+	parser.add_option("-f", "--function",help="Bicoherence function used in analysis.",default = 2)
+	parser.add_option("-a", "--channelA",help="First channel used in analysis.",default = 'L1-GDS-CALIB_STRAIN')
+	parser.add_option("-b", "--channelB",help="Second channel used in analysis.",default = '')
+	parser.add_option("-c", "--channelC",help="Third channel used in analysis.",default = '')
+	parser.add_option("-p", "--publicRoot",help="Root path to public directory.",default = '/home/bernard.hall/public_html/bicoherence/')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+	threshold = float(opts.thresh)
+	overlap = float(opts.ol)
+	function = int(opts.function)
+	mainChannel = opts.channelA
+	nm = opts.name
+
+	if (function == 0) or (function ==1):
+		channelB = opts.channelB
+		channelC = opts.channelC
+
+	# when T is used for threshold, the input value will be overridden
+	#mode = 1
+	# build HTML page
+	#threshold = 0.8
+	directoryC = opts.outpath
+	string = """<!DOCTYPE html>
+<html>
+<head>
+<title>""" + mainChannel + """ [""" + directoryC + """] HOS analysis
+</title>
+</head>
+<body>
+"""
+
+	#directoryC = opts.outpath
+	spl = directoryC.split('/')
+	#print len(spl)
+	if len(spl) > 1:
+		dirbase = spl[len(spl)-1]
+		#print directoryC
+	else:
+		dirbase = directoryC
+	output = opts.publicRoot + dirbase +'/'
+	experiments = int(opts.experiments)
+
+	if not os.path.exists(output):
+		os.makedirs(output)
+	runList = glob.glob(directoryC + '/clusters*.dat')
+	intList = glob.glob(directoryC + '/intersection*.dat')
+	figList = glob.glob(directoryC + '/*clusters.png')
+	acList = glob.glob(directoryC + '/*autocoherence*.png')
+	
+	sfile = open(directoryC + '/' + nm + '/sEvent.dat')
+	sList = sfile.readlines()
+	sfile.close()
+
+	acflag = 0
+	if len(acList) > 0: # check if there are any autocoherence plots to include
+		acflag = 1
+
+	#print figList
+	#print sList
+	count = 0
+	for item in runList:
+		count = count + 1
+
+	countint = 0
+        for item in intList:
+                countint = countint + 1
+
+	countFig = 0
+	for item in sList:
+                countFig = countFig + 1
+	#for item in figList:
+	#	countFig = countFig + 1
+
+	count = count - countint
+	if count < 0:
+		count = 0.5
+
+	string = string + """<h1>Summary of '""" + directoryC + """' Study</h1>
+"""
+	if function == 2:
+		string = string + """<h2>Autobicoherence of """ + mainChannel + """</h2>
+""" 
+	if function == 3:
+                string = string + """<h2>Autobispectrum of  """ + mainChannel + """</h2>
+"""
+	string = string + """<ul><li>Total number of candidate O(2n) nonlinear couplings: """ + str(count) + """</li>
+<li>Overlap: """ + str(overlap)  + """ %</li>
+"""
+	string = string + """<li>Of """ + str(experiments) + """ time series, """ + str(countFig) + """ had at least one detection of QPC.</li></ul>
+"""
+	if count > 0:
+		string = string + """<p><u>The plot(s) below show specific bifrequencies found in each detected "cluster"</u>:</p>
+<footer><small><i>(Note that the colors on the scatter plots are only a visual aid to separate one detected cluster from another, and do not reflect the values at those bifrequencies.)</i></small></footer>
+<footer><small>Scatter plot naming convention: [GPS start time] [ifo:channel] [channel sampling rate] [time series duration]_[GPS central time]</small></footer>"""
+		i = 1
+		#print acList
+		for item in figList:
+			pngFlag = 1
+			if acflag:
+				ac = acList[i-1].split('/')
+				#print ac
+				#print len(acList)
+				#print len(figList)
+				#print i-1
+				#print acList[i-1]
+				ac = ac[len(ac)-1]
+				ac = ac.replace(':','%3A')
+			item = item.split('/')
+			item = item[len(item)-1]
+			PSDitem = item.split('d')
+			#print PSDitem
+			if len(PSDitem) > 2: # check if PSD graphic has a trailing decimal--if so, remove
+				PSDitem = PSDitem[0:len(PSDitem)-1]
+			#print PSDitem
+			s = 'd'
+			PSDitem = s.join(PSDitem) # put the PSD string back together, and move on to the next stage
+			#print PSDitem
+			itemF = item.split('_')
+			PSDitem = PSDitem.split('_')
+			#print PSDitem
+			FIGitem = itemF[0:len(itemF)-1]
+			PSDitem = filter(None, PSDitem) #remove blank from trailing "_"
+			PSDitem = PSDitem[0:len(PSDitem)-1] #remove central time tag--not used in PSD naming
+			#print PSDitem
+			#if len(PSDitem) > 2:
+			#	PSDitem = PSDitem[0:len(PSDitem)-2]
+				#print PSDitem
+			#else:
+			#	PSDitem = PSDitem[0:len(PSDitem)-1]
+			s = '_'
+			PSDitem = s.join(PSDitem) # turn everything back into strings connected by '_'
+			FIGitem = s.join(FIGitem)
+			fiTest = FIGitem
+			#for Chrome and Safari compatibility:
+			altitem = item
+			PSDitem = PSDitem.replace('+','%2B')
+			PSDitem = PSDitem.replace(':','%3A')
+			FIGitem = FIGitem.replace('+','%2B')
+                        FIGitem = FIGitem.replace(':','%3A')
+			item = item.replace('+','%2B')
+                        item = item.replace(':','%3A')
+
+			pngItem = 'imsc_' + FIGitem  # imagesc graphic
+			pngTest = 'imsc_' + fiTest + '.png'
+			if not os.path.isfile(directoryC + '/' + pngTest): # check to see if imagesc file exists; otherwise, don't make link
+				#print directoryC + '/' + pngTest
+				pngFlag = 0
+			#---------------------
+			#string = string + """<div style='border: 2px solid gray; padding: 4px;'><div style='border: 1px solid black; width: 2%; padding-left: 4px; padding-right: 4px; margin-bottom: 5px; background: yellow;'>""" + str(i)  + """</div>
+			string = string + """<div style='border: 2px solid gray; padding: 4px;'><div style='border: 1px solid black; width: 2%; padding-left: 4px; padding-right: 4px; margin-bottom: 5px; background: yellow;'><a id='N"""+ str(i) +"""'></a>""" + str(i)  + """</div>
+"""	# added item anchor
+			if acflag:
+				string = string + """<div>Threshold for strong bicoherence: """ + str(threshold) + """</div><img src='""" + item + """' alt='""" + altitem  + """' /><img src='""" + ac + """' /><a href='PSD_""" + PSDitem + """.png'>PSD</a> <a href='""" + FIGitem + """.fig'>.fig</a>
+</div>
+"""
+			else:
+				if pngFlag:
+					string = string + """<div>Threshold for strong bicoherence: """ + str(threshold) + """</div><a href='"""+ item +"""' target='_blank'><img style ='height: auto; width: 50%; padding-top: 10px;' src='""" + item + """' alt='""" + altitem  + """' /></a><a href='"""+ pngItem  +""".png' target='_blank'><img style='height: auto; width: 50%; padding-top: 10px;' src='""" + pngItem + """.png' /></a><a href='PSD_""" + PSDitem + """.png' target='_blank'>PSD</a> (<a href='PSD_"""+ PSDitem  +""".fig'>PSD .fig</a>) --- <a href='""" + FIGitem + """.fig'>imagesc .fig</a> <i>(WARNING: Large file size!)</i> --- 
+<a href='additional.html' target='_blank'>Links to additional studies</a></div>
+"""
+				else:
+					string = string + """<div>Threshold for strong bicoherence: """ + str(threshold) + """</div><a href='"""+ item +"""' target='_blank'><img style ='height: auto; width: 50%; padding-top: 10px;' src='""" + item + """' alt='""" + altitem  + """' /></a><a href='PSD_""" + PSDitem + """.png' target='_blank'>PSD</a> (<a href='PSD_"""+ PSDitem +""".fig'>PSD .fig</a>) --- <a href='""" + FIGitem + """.fig'>imagesc .fig</a> <i>(WARNING: Large file size!)</i> --- 
+<a href='additional.html' target='_blank'>Links to additional studies</a></div>
+"""
+			i = i + 1
+	string = string + """</body>
+</html>"""
+
+	print string
+	#f = open(output + directoryC + '.html', 'w')
+	f = open(output + dirbase + '.html', 'w')
+	f.write(string)
+	f.close()
+	if not os.path.isfile(output + 'additional.html'):
+		print "Creating additional links page..."
+		f1 = open(output + 'additional.html', 'w')
+		string1 = """<!DOCTYPE html>
+<html>
+<head>
+<title>""" + mainChannel + """ [""" + directoryC + """] HOS analysis additional links</title>
+</head>
+<body>
+</body>
+</html>
+"""
+        	f1.write(string1)
+        	f1.close()
+		print "Done!"
+
+if __name__ == "__main__":
+    main()

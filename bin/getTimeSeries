@@ -1,0 +1,76 @@
+#!/usr/bin/python
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+
+from __future__ import division
+
+import os
+import sys
+import optparse
+import os.path
+import glob
+import time
+
+def parse_commandline():
+    """
+    Parse the options given on the command-line.
+    """
+    parser = optparse.OptionParser()
+
+    parser.add_option("-e", "--optExepath",
+                      help="Path to compilied getTs.", default = "getTs")
+    parser.add_option("-f", "--Channel_A", default = "L1:OAF-CAL_DARM_DQ")
+    #parser.add_option("-f", "--Channel_A", default = "OAF-CAL_DARM_DQ")
+    parser.add_option("-d", "--debug", help="Debug level for MATLAB function(s)", default = 1)
+    parser.add_option("-r", "--redundant", help="Redundant flag for MATLAB frame reading function (normally set to 0)", default = 0)
+    parser.add_option("-o", "--outputPath", help="Output directory/path for *time-series* files", default = "source")
+    parser.add_option("-w", "--workdir", default = ".")
+    parser.add_option("-C", "--cacheFile", help="Input cache/.lcf file (Required)")
+
+    opts, args = parser.parse_args()
+    return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+
+def main():
+	## parse the command line
+	opts = parse_commandline()
+	#tadd = 4096
+	#tadd = 64
+	#c_directory = os.listdir('cache/*.lcf')
+	workdir = opts.workdir
+	if workdir =='.':
+		dirflag = 1
+	else:
+		dirflag = 0
+	if dirflag:
+		#c_directory = glob.glob('cache/*.lcf')
+		outpath = opts.outputPath
+		cFile = 'cache/' + opts.cacheFile
+	else:
+		#c_directory = glob.glob(workdir + '/cache/*.lcf')
+                outpath = workdir + '/' + opts.outputPath
+		cFile = workdir + '/cache/' + opts.cacheFile
+		print outpath
+	#gwFile = []
+	# Temp --------------------------------
+	fchA = opts.Channel_A
+
+	exepath = opts.optExepath
+	#cmd = 'getTs(framePath,debugLevel,allowRedundantFlag,channelName,outpath,write_text)';	
+	cmd = "source inputfiles/MatlabSetup_R2008a_glnxa64.sh; %s %s %s %d %d %s %s %d"%(exepath,cFile,opts.cacheFile,int(opts.debug),int(opts.redundant),fchA,outpath,1)
+	print cmd
+	print "Reading frame data..."
+        os.system(cmd)
+
+if __name__ == "__main__":
+    main()

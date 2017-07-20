@@ -1,0 +1,124 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-t", "--timeFile",help="Text file with central times.",default = 'centralTimes.txt')
+	parser.add_option("-c", "--channel",help="IFO channel.",default = 'L1:GDS-CALIB_STRAIN')
+	parser.add_option("-w", "--workdirectory",help="Working directory.",default = '.')
+	parser.add_option("-s", "--sourceDir",help="Name of source directory.",default = 'source')
+
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+        sFile = opts.timeFile
+	wdir = opts.workdirectory
+	channel = opts.channel
+	sdir = opts.sourceDir
+	duration = 12 #  hard-coded for now
+	central = duration/2
+	cdir = 1
+	if wdir == '.':
+		checkList = glob.glob(sdir + '/*.txt')  # check to see if any files exist already
+		missingList = glob.glob(sdir + '/*missing') # check if any times were marked missing
+	else:
+		checkList = glob.glob(wdir  + '/' + sdir + '/*.txt')  # check to see if any files exist already
+                missingList = glob.glob(wdir+ '/' + sdir + '/*missing') # check if any times were marked missing
+		cdir = 0
+        times = open(sFile, 'r')
+        tms = times.readlines()
+	i = 0
+	for item in checkList:
+		if cdir:
+			item = item.split('+')
+			item = item[0]
+			item = item.split('/')
+			item = float(item[1])
+			item = "%.4f" % item
+			checkList[i] = item
+		else:
+			item = item.split('/')
+			item = item[len(item)-1:len(item)]
+			s = '/'
+			item = s.join(item)
+			item = item.split('+')
+                        item = item[0]
+                        item = item.split('/')
+                        item = float(item[1])
+                        item = "%.4f" % item
+                        checkList[i] = item
+		i = i + 1
+	#print checkList
+	i = 0
+	for item in missingList:
+		if cdir:
+			item = item.split('_')
+			item = item[0]
+			item = item.split('/')
+                	item = item[1]
+			missingList[i] = item
+		else:
+			item = item.split('/')
+                        item = item[len(item)-1:len(item)]
+                        s = '/'
+                        item = s.join(item)
+			item = item.split('_')
+                        item = item[0]
+                        item = item.split('/')
+                        item = item[1]
+                        missingList[i] = item
+		i = i + 1
+	#print missingList
+	j = 1
+	number = len(tms) - len(checkList) - len(missingList)
+        for line in tms:
+		line = line.strip('\n')
+		#print line
+		diff = float(line) - float(central)
+		#diff = round(diff,2)
+		diffStr = "%.4f" % diff
+		#print diffStr
+		#print str(round(float(line) - float(central),4))
+		#print str(line)
+		if (not (diffStr in checkList)) and (not (str(float(line)) in missingList)):
+			if number > 0:
+				print 'Fetching time series ' + str(j) + ' of ' + str(number)
+			else:
+				print 'Fetching time series ' + str(j)
+	     		cmd = 'getTimeSeries -c ' + line + ' -f ' + channel  + ' -d ' + str(duration) + ' -w ' + wdir
+                	#cmd = '/usr/bin/gw_data_find --observatory L --frame-cache  --url-type file --gps-start-time ' + start + ' --gps-end-time ' + end + ' --output ' + namestring + ' --type L1_R'
+                	#cmd = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; ./list_analyze %s %d'%(path,tol)
+                	print cmd
+                	os.system(cmd)
+			j = j + 1
+	times.close()
+if __name__ == "__main__":
+    main()

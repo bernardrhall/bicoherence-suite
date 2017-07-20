@@ -1,0 +1,57 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+#function se2cen(dur,funct,split,limit,ctimes,nwsegs,txname,outpath)
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser()
+
+        parser.add_option("-d", "--duration",help="Individual input segment duration.",default =12)
+        parser.add_option("-f", "--function",help="Function selection (1 [make central times] or 2 [make segments]).",default = 1)
+        parser.add_option("-s", "--split",help='Split central time files based on "limit"',default = 1)
+	parser.add_option("-l", "--limit",help="Job/segment limit for individual file (if using split).",default = 60)
+	parser.add_option("-c", "--ctimes",help="Create central times file.",default = 1)
+	parser.add_option("-n", "--nwsegs",help="Create a corrected segment file.",default = 0)
+	parser.add_option("-t", "--txname",help="Input file name.",default = 'segments.txt')
+	parser.add_option("-o", "--outpath",help="Output path.",default = '.')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        opts = parse_commandline()
+	dur = float(opts.duration)
+	funct = int(opts.function)
+	split = int(opts.split)
+	limit = int(opts.limit)
+	ctimes = int(opts.ctimes)
+	nwsegs = int(opts.nwsegs)
+	txname = opts.txname
+	outpath = opts.outpath
+	#directory = '.'
+	#cmd = 'source ../inputfiles/MatlabSetup_R2008a_glnxa64.sh; ./se2cen %d %d %d %d %d %d %s %s'%(dur,funct,split,limit,ctimes,nwsegs,txname,outpath)
+	cmd = 'source ../inputfiles/MatlabSetup_R2008a_glnxa64.sh; se2cen %d %d %d %d %d %d %s %s'%(dur,funct,split,limit,ctimes,nwsegs,txname,outpath)
+	print cmd
+
+	os.system(cmd)
+
+if __name__ == "__main__":
+    main()

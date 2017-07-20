@@ -1,0 +1,25 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+import commands
+
+from bcv import git_version
+
+lst = commands.getstatusoutput('grep "aborted" *.txt')
+lst = lst[1]
+lst = lst.split('\n')
+
+for line in lst:
+	line = line.split(':')
+	line = line[0]
+	if line:
+		os.remove(line)
+		print line + ' removed!'
+	else:
+		print "Nothing to remove!"

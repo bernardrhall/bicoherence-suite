@@ -1,0 +1,79 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+import glob
+import time
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-d", "--directory",help="Directory containing cache list file(s).",default = '.')
+	parser.add_option("-c", "--channel",help="IFO Channel.",default = 'L1:GDS-CALIB_STRAIN')
+	parser.add_option("-s", "--tsDir",help="Name of time-series/source directory.",default = 'source')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+	opts = parse_commandline()
+        sourceDir = opts.directory
+	src = opts.tsDir
+	flag = 0
+	#channel = 'L1:PEM-CS_ACC_OPLEV_ITMX_Y_DQ'
+	channel = opts.channel
+	if sourceDir == '.':
+		sourceDir = ''
+		#wdir = sourceDir
+		wdir = '.'
+		#readDir = '.'
+		flag = 1
+	else:
+		wdir = sourceDir
+		sourceDir = sourceDir + '/'
+		#readDir =  sourceDir + '/'
+	accGroup = 'ligo.dev.o2.detchar.nonlin_coup.twochanveto'
+	delaycnt = 20 # number of cycles after which to pause
+	delay = 10 #seconds
+	files = glob.glob(sourceDir + 'cacheList_[1-9]*.txt')
+	#print files
+	i = 1
+	for item in files:
+		#shRun = '".././tsBatch -t ' + item + ' -c '+ channel +'"'
+		if flag:
+			shRun = '"tsBatch -c ' + channel + ' -w ' + wdir + ' -s ' + src + ' -l ' + item + '"'
+		else:
+			item = item.split('/')
+			item = item[len(item) - 1]
+			shRun = '"tsBatch -c ' + channel + ' -w ' + wdir + ' -s ' + src + ' -l ' + item + '"'
+		if src == 'source':
+			cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + shRun + ' > ' + sourceDir + 'ts_out_'+ str(i) +'.txt &'
+		else:
+			cmd = 'nohup condor_run -a accounting_group=' + accGroup + ' ' + shRun + ' > ' + sourceDir + 'ts_' + src + '_out_'+ str(i) +'.txt &'
+		print cmd
+		os.system(cmd)
+                if not (i % delaycnt):
+                	time.sleep(delay)
+		i = i + 1
+if __name__ == "__main__":
+    main()

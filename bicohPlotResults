@@ -1,0 +1,79 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+        """
+        Parse the options given on the command-line.
+        """
+        parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+        parser.add_option("-i", "--inpath", help="Path to input directory.",default = 'source')
+        parser.add_option("-o", "--outpath", help="Path to output directory.",default = 'output')
+        parser.add_option("-F", "--fontsize", help="Fontsize for graph labels.",default = 14)
+	parser.add_option("-t", "--timeWindow", help="Time window used for study (s).",default = 4)
+	parser.add_option("-q", "--fs", help="Analysis frequency, Hz (after decimation).",default = 4096)
+        parser.add_option("-M", "--matName", help="Name of matrix to scan.",default = 'bisp')
+	parser.add_option("-T", "--tolerance", help="Tolerance if doing cluster scan.",default = 4)
+	parser.add_option("-c", "--clusters", help="Simple cluster plot, on/off.",default = 1)
+	parser.add_option("-l", "--legend", help="Add legend, on/off.",default = 0)
+	parser.add_option("-O", "--overload", help="Cluster overload threshold.",default = 100)
+	parser.add_option("-p", "--fig2png", help="Create .png of .fig file.",default = 1)
+        #parser.add_option("-f", "--mfile", help="Name of file to scan.",default = 'test.mat')
+        opts, args = parser.parse_args()
+        return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+	ipath = opts.inpath
+	opath = opts.outpath
+	#mFile = opts.mfile
+	mName = opts.matName
+	fontsize = opts.fontsize
+	time_window = opts.timeWindow
+	fs = opts.fs
+	findCL = opts.clusters
+	tol = opts.tolerance
+	leg = opts.legend	
+	overload = opts.overload	
+	fpng = opts.fig2png
+
+	if not os.path.exists(opath + '/'):
+        	os.makedirs(opath + '/')
+
+	f = open(ipath + '/sEvent.dat', 'r')
+	files = f.readlines()
+	f.close()
+	num = len(files)
+	i = 1
+	for line in files:
+		print 'Plot results: ' + str(i) + ' of ' + str(num) + '...'
+		line = line.strip('\n')
+        	line = line.strip('\r')
+		cmd = 'source inputfiles/MatlabSetup_R2008a_glnxa64.sh; bicohPlot %s %s %s %s %f %f %f %d %d %d %d %d'%(ipath,opath,line,mName,float(fontsize),float(time_window),float(fs),int(findCL),int(tol),int(leg),int(overload),int(fpng))
+		#bicohPlot(ipath,opath,mFile,mName,fontsize,time_window,fs)	
+		print cmd
+		os.system(cmd)
+		i = i + 1
+if __name__ == "__main__":
+    main()
+

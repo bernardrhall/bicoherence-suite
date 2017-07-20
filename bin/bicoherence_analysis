@@ -1,0 +1,132 @@
+#!/usr/bin/python
+
+
+import os
+import sys
+import shutil
+import re
+import optparse
+import os.path
+
+from bcv import git_version
+
+# =============================================================================
+#
+#                               PREAMBLE
+#
+# =============================================================================
+
+def parse_commandline():
+	"""
+    	Parse the options given on the command-line.
+    	"""
+    	parser = optparse.OptionParser(usage = __doc__,version=git_version.verbose_msg)
+
+    	parser.add_option("-G", "--GW_channel",help="GW channel file (string).")
+    	parser.add_option("-r", "--fs",help="Expected sampling rate of input time series.",default = 16384)
+    	parser.add_option("-T", "--threshMan",help="Manual threshold, on or off.",default = 1)
+    	parser.add_option("-c", "--HbicohThresh",help="Manual threshold for function 2.",default = 0.9606)
+   	parser.add_option("-H", "--HbicohBspcThresh",help="Manual threshold for function 3.",default = 0.7)
+    	parser.add_option("-F", "--fnct",help="Function selection.")
+   	parser.add_option("-m", "--mode",help="Mode selection.",default = 0)
+    	parser.add_option("-A", "--ChannelA",help="A channel file (string).",default = 'A')
+    	parser.add_option("-B", "--ChannelB",help="B channel file (string).",default = 'B')
+    	parser.add_option("-x", "--filt",help="Filter, on/off.",default = 1)
+    	parser.add_option("-s", "--segslice",help="Slice time series, on/off.",default = 0)
+    	parser.add_option("-S", "--segStart",help="Segment slice start time (s).",default = 0.0)
+    	parser.add_option("-E", "--segEnd",help="Segment slice end time (s).",default = 1.0)
+    	parser.add_option("-N", "--full_SNR",help="Process SNR on full time segment before segment slice, on/off.",default = 1)
+    	parser.add_option("-a", "--autom",help="Automatic overlap parameter calculating, on/off .",default = 1)
+   	parser.add_option("-t", "--time_window",help="Desired length of time for analysis (s).",default = 4.0)
+    	parser.add_option("-o", "--offset_multiplier",help="(See manual.  Normally this should be calculated automatically by setting autom to 1.)",default = 1.0)
+    	parser.add_option("-O", "--ol",help="Desired segment overlap (%).",default = 98.0)
+    	parser.add_option("-g", "--seg",help="Desired number of experiments.",default = 30)
+    	parser.add_option("-l", "--tile",help="Tiled option, on/off.",default = 0)
+   	parser.add_option("-C", "--GPS_central",help="Expected GPS central time.",default = 0.0)
+   	parser.add_option("-k", "--check",help="Check parameters, on/off.",default = 1)
+    	parser.add_option("-D", "--dnsmple",help="Downsample, on/off.",default = 0)
+    	parser.add_option("-d", "--decm",help="Decimate, on/off.",default = 1)
+   	parser.add_option("-p", "--plot_img",help="Plot, on/off.",default = 0)
+    	parser.add_option("-R", "--randomize",help="Use phase randomization, on/off.",default = 1)
+    	parser.add_option("-q", "--preSeq",help="Use user-provided random number sequence, on/off.",default = 0)
+	parser.add_option("-w", "--sequenceN",help="User-provided random number list (typically a text file), full path (string).",default = 'text.txt')
+    	parser.add_option("-f", "--fsd",help="Target downsampling or decimation sampling rate (Hz).",default = 4096)
+    	parser.add_option("-u", "--uSnrV",help="User-input SNR value.",default = 1.0)
+    	parser.add_option("-U", "--upr",help="Upper bispectral value for bispectrogram calculation.",default = 1.0)
+	parser.add_option("-P", "--path",help="Output path.",default = '')
+	parser.add_option("-i", "--ifoChannel",help="IFO and channel information.",default = '')
+
+    	opts, args = parser.parse_args()
+    	return opts
+
+# =============================================================================
+#
+#                                    Main
+#
+# =============================================================================
+def main():
+        ## parse the command line
+        opts = parse_commandline()
+
+	pass_band_fl = 0.0
+	pass_band_fh = 1.0
+	
+	exepath = 'bicoherence_main_CF'
+
+	GW_channel = opts.GW_channel
+        fs = float(opts.fs)
+        threshMan = int(opts.threshMan)
+        HbicohThresh = float(opts.HbicohThresh)
+        HbicohBspcThresh = float(opts.HbicohBspcThresh)
+        fnct = int(opts.fnct)
+        mode = int(opts.mode)
+        filt = int(opts.filt)
+        ChannelA = opts.ChannelA
+        ChannelB = opts.ChannelB
+        segslice = int(opts.segslice)
+        segStart = float(opts.segStart)
+        segEnd = float(opts.segEnd)
+        full_SNR = int(opts.full_SNR)
+        autom = int(opts.autom)
+        time_window = float(opts.time_window)
+        offset_multiplier = float(opts.offset_multiplier)
+        ol = float(opts.ol)
+        seg = int(opts.seg)
+        tile = int(opts.tile)
+        GPS_central = float(opts.GPS_central)
+        check = int(opts.check)
+        dnsmple = int(opts.dnsmple)
+        decm = int(opts.decm)
+        plot_img = int(opts.plot_img)
+        randomize = int(opts.randomize)
+        preSeq = int(opts.preSeq)
+        sequenceN = opts.sequenceN
+        fsd = float(opts.fsd)
+        uSnrV = float(opts.uSnrV)
+        upr = float(opts.upr)
+	path = opts.path
+	ifoCh = opts.ifoChannel
+	verbose = 1
+	chStr = 1
+        #cmd = "source run_bicoherence_main_CF.sh; %s %s %d %d %f %f %d %d %d"%(exepath,
+        #    GW_channel, fs, threshMan, HbicohThresh,HbicohBspcThresh, fnct, mode, filt)
+
+	cmd = "source inputfiles/MatlabSetup_R2008a_glnxa64.sh; %s %s %d %d %f %f %d %d %d %s %s %d %f %f %d %d %f %f %f %d %d %f %d %d %d %d %d %d %s %d %f %f %f %f %d %d %s %s"%(exepath,
+            GW_channel, fs, threshMan, HbicohThresh,HbicohBspcThresh, fnct, mode, filt, ChannelA, ChannelB, segslice, 
+	    segStart, segEnd, full_SNR, autom, time_window, offset_multiplier, ol, seg, tile, GPS_central, check, 
+	    dnsmple, decm, plot_img, randomize, preSeq, sequenceN, fsd, pass_band_fl, pass_band_fh, uSnrV, upr, verbose, chStr, path, ifoCh)
+
+	#cmd = "./%s %s %d %d %f %f %d %d %d %s %s %d %f %f %d %d %f %f %f %d %d %f %d %d %d %d %d %d %s %d %f %f %f %f"%(exepath,
+        #    GW_channel, fs, threshMan, HbicohThresh,HbicohBspcThresh, fnct, mode, filt, ChannelA, ChannelB, segslice,
+        #    segStart, segEnd, full_SNR, autom, time_window, offset_multiplier, ol, seg, tile, GPS_central, check,
+        #    dnsmple, decm, plot_img, randomize, preSeq, sequenceN, fsd, pass_band_fl, pass_band_fh, uSnrV, upr)
+
+        print >> sys.stderr, "\n"
+        print >> sys.stderr, "cmd: %s"%cmd
+        print >> sys.stderr, "\n"
+        print >> sys.stderr, "Running 'bicoherence_main_CF'..."
+	
+	os.system(cmd)	
+
+if __name__ == "__main__":
+    main()
